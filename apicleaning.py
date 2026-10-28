@@ -1,8 +1,10 @@
 import calendar
 import io
+import json
 import os
 import re
 import smtplib
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from email import encoders
 from email.mime.base import MIMEBase
@@ -15,6 +17,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 from ido_api import (
@@ -48,16 +51,21 @@ GID_EMPLOYEE_CALENDARS = 0  # ← gid listy "ID Calendar" (wpisz właściwy)
 # Nowe jednostki z IdoBooking od razu jako TAK (True) albo NIE (False)
 AUTO_ACTIVATE_NEW_UNITS = True
 
-# Comiesięczne zliczanie chemii
+# Chemia: dopisywana wyłącznie do istniejących uborek (nigdy osobne zadania)
 CHEM_MARK = "Comiesięczne zliczanie chemii"
-CHEM_TITLE = "Comiesięczne zliczanie chemii i uzupełnienie braków"
-CHEM_PER_DAY = 4
+CHEM_DAY_LIMIT = 4                      # maksymalnie tyle adresów z chemią w jednym dniu
+CHEM_EXCLUDE_SUBSTR = ("SZEMUD",)       # adresy, których chemia nigdy nie dotyczy
 CHEM_HEADER = f"🧴 {CHEM_MARK.upper()} - policz stany i uzupełnij braki:"
-CHEM_HOURS = (9, 10)
-CHEM_SKIP_WEEKENDS = True
 CHEM_DONE = "✅"
 CHEM_CHECKED = ("TRUE", "TAK", "1", "YES")
 CHEM_UNCHECKED = ("FALSE", "NIE", "0", "NO")
+
+# Jednostki, które są jednym mieszkaniem - chemia liczona raz na całość.
+# Klucz: początek nazwy (UPPER), wartość: wspólny adres do chemii.
+CHEM_MERGE = {
+    "TRAKT 99": "TRAKT ŚW. WOJCIECHA 99/3A",   # pokoje 1-3 oraz studia K2 (Rout) i K3 (Queem)
+}
+
 DEFAULT_CHEM_TEXT = """Miejsca trudnodostępne: W pomieszczeniach o niskim standardzie (brak światła, piwnice, obecność insektów/gryzoni) nie ma obowiązku ręcznego liczenia na miejscu. Proszę o wykonanie wyraźnych zdjęć zapasów – stan zostanie zliczony online na ich podstawie.
 
 Priorytet spożywczy: Artykuły takie jak kawa, cukier, herbata, sól i pieprz należy niezwłocznie dostarczyć „do góry” (do części użytkowej), aby były dostępne dla gości/pracowników.
@@ -97,6 +105,9 @@ ELEKTROZAMEK = (
 MAX_LOCK_DAYS = 120
 LOCK_EXCLUDE_NOTES = ("plan cenow", "cenowy")
 
+# Okno skanowania: od dziś na tyle dni do przodu
+SCAN_DAYS_AHEAD = 14
+
 STATS = {"added": [], "cancelled": []}
 
 
@@ -104,12 +115,17 @@ STATS = {"added": [], "cancelled": []}
 
 def month_window():
     today = datetime.now(POLAND_TZ).date()
-    end_date = date(2026, 11, 5)
-    return today, end_date
+    return today, today + timedelta(days=SCAN_DAYS_AHEAD)
 
 
 def scan_window():
     return month_window()
+
+
+def calendar_month_window(today):
+    """Od dziś do ostatniego dnia bieżącego miesiąca."""
+    last = calendar.monthrange(today.year, today.month)[1]
+    return today, today.replace(day=last)
 
 
 # ==================== NARZĘDZIA ====================
@@ -318,9 +334,6 @@ def find_existing(uids, by_uid, base, where, warnings):
 
 # ==================== GOOGLE: AUTORYZACJA ====================
 
-import json
-from google.oauth2 import service_account
-
 def get_credentials():
     if os.environ.get("GOOGLE_SA_JSON"):
         info = json.loads(os.environ["GOOGLE_SA_JSON"])
@@ -361,7 +374,8 @@ def load_apartments():
             continue  # całkowicie pusty wiersz z przypadkowym TAK
         if not item_id or not name:
             incomplete = True
-            notes.append(f"Aktywny wiersz OBAPI bez nazwy lub objectItemId (ID: {item_id or '-'}) - usuwanie wstrzymane")
+            notes.append(
+                f"Aktywny wiersz OBAPI bez nazwy lub objectItemId (ID: {item_id or '-'}) - usuwanie wstrzymane")
             continue
         if not own_name:
             notes.append(f"Brak „Nazwa do kalendarza” dla ID {item_id} - użyto nazwy z IdoBooking: {name}")
@@ -369,6 +383,7 @@ def load_apartments():
 
     print(f"🏠 Aktywne jednostki: {len(apts)} (nieaktywne: {inactive})")
     return apts, incomplete, notes
+
 
 def read_objects_rows(creds):
     sheets = build("sheets", "v4", credentials=creds).spreadsheets().values()
@@ -472,25 +487,37 @@ def load_notes():
     return notes, extras, chem, chem_done
 
 
+EMPLOYEE_SHEET_NAME = "ID Cleaning"  # Точное название вкладки с картинки
+
+
 def load_employee_calendars():
     calendars = {}
     try:
-        df = read_sheet(GID_EMPLOYEE_CALENDARS)
+        # Читаем данные из вкладки "ID Cleaning"
+        df = read_sheet_by_name(EMPLOYEE_SHEET_NAME, dtype=str).fillna("")
         for _, r in df.iterrows():
-            name = clean(r.iloc[0])
-            cal_id = clean(r.iloc[1])
+            name = clean(r.iloc[0])  # Колонка A (Cleaning / Имя)
+            cal_id = clean(r.iloc[1])  # Колонка B (ID Calendar)
             if name and cal_id and "@" in cal_id:
-                calendars[name] = cal_id
-        print(f"👥 Kalendarze sprzątaczek: {len(calendars)}")
+                # Очищаем суффикс " Calendar" из имени, если он есть, чтобы осталось чистое имя
+                clean_name = re.sub(r"\s+Calendar\s*$", "", name, flags=re.I).strip()
+                calendars[clean_name or name] = cal_id
+        print(f"👥 Kalendarze sprzątaczek (z zakładki '{EMPLOYEE_SHEET_NAME}'): {len(calendars)}")
     except Exception as e:
-        print(f"⚠️ Błąd odczytu listy kalendarzy sprzątaczek: {e}")
+        print(f"⚠️ Błąd odczytu zakładki '{EMPLOYEE_SHEET_NAME}': {e}")
+
     return calendars
 
 
 def addr_key(text):
     s = re.sub(r"\([^()]*\)", "", text or "").upper()
+    s = re.sub(r"\bGDYNIA\b", "", s)
     s = re.sub(r"\bPOW\b", "POWSTAŃCÓW WARSZAWSKICH", s)
     s = re.sub(r"\bROWECKIEGO\b", "GROTA ROWECKIEGO", s)
+    s = re.sub(r"\bM\.?\s*(?=\d)", "M", s)              # „M. 9” -> „M9”
+    s = re.sub(r"(\d+)[A-Z]\b(?=/)", r"\1", s)          # „26A/7” -> „26/7”
+    s = re.sub(r"\s+-\s+.*$", "", s)                    # wszystko po „ - ” (nazwy apartamentów)
+    s = re.sub(r"\b(APARTMENT|APARTAMENT|ROOM|ELITE|OASIS|WINE|CAMEL)\b.*$", "", s)
     return re.sub(r"[^A-Z0-9]", "", s)
 
 
@@ -742,56 +769,117 @@ def find_manual_events(events, groups, extra_uids=()):
 
 # ==================== SYNCHRONIZACJA KALENDARZY SPRZĄTACZEK ====================
 
-def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals):
+def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals, today):
     mismatches = []
-    today = str(datetime.now(POLAND_TZ).date())
+    today_s = str(today)
 
     for emp_name, emp_cal_id in employee_cals.items():
         where = f"pracownik {emp_name}"
-        emp_events = get_calendar_events(service, emp_cal_id)
+        emp_events = get_calendar_events(service, emp_cal_id, today, today)
         if emp_events is None:
             continue
 
-        emp_active = [e for e in emp_events if e["date"] == today]
-        bases = set()
-        for ev in emp_active:
-            base_clean = re.sub(r"\s*\(.*?\)", "", ev["summary"])
-            base_clean = re.sub(r"\s*-\s*.*$", "", base_clean).strip().upper()
-            if base_clean:
-                bases.add(base_clean)
-        emp_by_uid = index_by_uid(emp_active)
+        emp_active = [e for e in emp_events if e["date"] == today_s]
+        if not emp_active:
+            continue
 
         for key, g in groups.items():
-            if key.split("_")[0] != today:
+            g_date = key.split("_")[0]
+            if g_date != today_s:
                 continue
+
             g_base = g["base"].upper()
-            if not any(b in g_base or g_base in b for b in bases):
+            matching_emp_evs = [
+                ev for ev in emp_active
+                if g_base in place_key(ev["summary"]) or place_key(ev["summary"]) in g_base
+            ]
+
+            if not matching_emp_evs:
                 continue
 
+            existing_ev = matching_emp_evs[0]
             body = build_event_body(g, notes, extras, chem_texts)
-            existing_ev, conflict = find_existing(g["uids"], emp_by_uid, g["base"], where, mismatches)
-            if conflict and existing_ev is None:
-                continue
+            body = prepare_body(body, existing_ev)
 
-            if existing_ev:
-                body = prepare_body(body, existing_ev)
-                mismatches += review_manual(existing_ev, body["summary"], where)
-                mismatches += room_checks(existing_ev, where)
-                try:
-                    service.events().patch(calendarId=emp_cal_id, eventId=existing_ev["id"], body=body).execute()
-                except Exception as e:
-                    print(f"  ❌ Błąd aktualizacji ({emp_name}): {e}")
-            else:
-                try:
-                    service.events().insert(calendarId=emp_cal_id, body=body).execute()
-                    STATS["added"].append({"date": today, "summary": body["summary"], "where": where})
-                except Exception as e:
-                    print(f"  ❌ Błąd dodawania ({emp_name}): {e}")
+            mismatches += review_manual(existing_ev, body["summary"], where)
+            mismatches += room_checks(existing_ev, where)
+            try:
+                service.events().patch(calendarId=emp_cal_id, eventId=existing_ev["id"], body=body).execute()
+
+                # Фиксируем обновление в статистике для отчета
+                STATS["added"].append({
+                    "date": today_s,
+                    "summary": body["summary"],
+                    "where": where
+                })
+
+                print(f"  🔄 Zaktualizowano w kalendarzu ({where}): [{today_s}] {body['summary']}")
+            except Exception as e:
+                print(f"  ❌ Błąd aktualizacji ({where}): {e}")
 
     return mismatches
 
 
-# ==================== COMIESIĘCZNE ZLICZANIE CHEMII ====================
+def remove_cancelled_from_employee_calendars(service, employee_cals, employee_events,
+                                             groups, data_incomplete):
+    """
+    Usuwa z kalendarzy sprzątaczek wydarzenia, których rezerwacje/blokady
+    nie istnieją już w API (anulowane). Te same zabezpieczenia co w głównym kalendarzu:
+      - wydarzenia bez UID (wpisane ręcznie) nie są ruszane,
+      - przy niepełnych danych z API/OBAPI nic nie jest usuwane,
+      - kalendarz, którego nie udało się pobrać, jest pomijany.
+    Jeśli UID nadal istnieje, ale sprzątanie przesunęło się na inny dzień - tylko ostrzeżenie.
+    """
+    mismatches = []
+    uid_dates = {u: key.split("_")[0] for key, g in groups.items() for u in g["uids"]}
+
+    for emp_name in employee_cals:
+        events = employee_events.get(emp_name)
+        if events is None:
+            continue
+        where = f"pracownik {emp_name}"
+        emp_cal_id = employee_cals[emp_name]
+
+        for ev in events:
+            ev_uids = extract_uids_from_description(ev["description"])
+            if not ev_uids:
+                continue  # wpis ręczny - nie ruszamy
+
+            if any(u in uid_dates for u in ev_uids):
+                new_dates = {uid_dates[u] for u in ev_uids if u in uid_dates}
+                if ev["date"] not in new_dates:
+                    mismatches.append(
+                        f"{CHECK_TAG} [{ev['date']}] {where}: „{ev['summary']}” – rezerwacja ma teraz "
+                        f"sprzątanie w dniu {', '.join(sorted(new_dates))}. "
+                        f"Wydarzenie NIE zostało przesunięte – sprawdź i popraw ręcznie."
+                    )
+                continue
+
+            if data_incomplete:
+                print(f"⚠️ Pominięto usuwanie ({where}, niepełne dane z API/OBAPI): "
+                      f"[{ev['date']}] {ev['summary']}")
+                continue
+
+            try:
+                service.events().delete(calendarId=emp_cal_id, eventId=ev["id"]).execute()
+                STATS["cancelled"].append({"date": ev["date"], "summary": ev["summary"], "where": where})
+                print(f"🗑️ Usunięto z kalendarza ({where}): [{ev['date']}] {ev['summary']}")
+            except Exception as e:
+                print(f"⚠️ Błąd usuwania z kalendarza ({where}) {ev['id']}: {e}")
+
+    return mismatches
+
+
+# ==================== CHEMIA (DOPISYWANA DO UBOREK) ====================
+
+def chem_addr(address):
+    """Adres używany do chemii: jednostki z CHEM_MERGE są sklejane w jeden (np. Trakt 99 = jedno mieszkanie)."""
+    u = address.upper()
+    for frag, target in CHEM_MERGE.items():
+        if u.startswith(frag):
+            return target
+    return address
+
 
 def is_chem_event(summary):
     return CHEM_MARK.lower() in (summary or "").lower()
@@ -801,162 +889,111 @@ def chem_is_done(summary):
     return (summary or "").strip().startswith(CHEM_DONE)
 
 
-def match_address(summary, bases):
-    s = re.sub(r"^✅\s*", "", (summary or "").strip().upper())
-    s = re.sub(r"\s*-\s*CZYTAJ OPIS.*$", "", s).strip()
-    found = [b for b in bases if s == b or s.startswith(b + " ") or s.startswith(b + "(")]
-    return max(found, key=len) if found else None
+def chem_excluded(address):
+    """Adresy wyłączone z chemii (np. Szemud) - nigdy nie dostają chemii."""
+    return any(x in address.upper() for x in CHEM_EXCLUDE_SUBSTR)
 
 
-def chem_target(e, bases):
-    s = re.sub(r"^✅\s*", "", (e["summary"] or "").strip())
-    if is_chem_event(s):
-        head = s.split("–")[0].strip().upper()
-        return head if head in bases else None
-    if CHEM_MARK.lower() in (e["description"] or "").lower():
-        return match_address(s, bases)
-    return None
+def cleanings_in_month(groups, today):
+    """
+    {ADRES_CHEM_UPPER: [daty uborek od dziś do końca miesiąca]}.
+    Uborki wszystkich jednostek sklejonych w jeden adres (np. Trakt 99 pokoje 1-3 + K2 + K3)
+    trafiają do wspólnej listy, więc chemia wychodzi raz na mieszkanie.
+    """
+    _, month_end = calendar_month_window(today)
+    by_addr = defaultdict(set)
+    for key in groups:
+        day_s, b = key.split("_", 1)
+        d = date.fromisoformat(day_s)
+        if today <= d <= month_end:
+            by_addr[chem_addr(b).upper()].add(d)
+    return {b: sorted(ds) for b, ds in by_addr.items()}
 
 
-def chem_plan(events, addresses, today, sheet_done=()):
-    month, today_s = f"{today:%Y-%m}", str(today)
-    bases = {a.upper(): a for a in addresses}
-    done, open_, missed = set(), {}, set()
+def chem_done_set(addresses, sheet_done):
+    """Adresy z TRUE w arkuszu „Cleaning Uwagi” - chemia policzona."""
+    return {a.upper() for a in addresses if is_done_in_sheet(a, sheet_done)}
 
-    for e in events:
-        if not e["date"].startswith(month):
-            continue
-        addr = chem_target(e, bases)
-        if not addr:
-            continue
-        if chem_is_done(e["summary"]):
-            done.add(addr)
-        elif e["date"] >= today_s:
-            open_.setdefault(addr, e)
+
+def chem_status(addresses, groups, today, sheet_done):
+    """
+    Stan chemii dla każdego adresu (adresy już po chem_addr):
+      'sheet'        - policzone (TRUE w arkuszu)
+      'todo'         - nie policzone, ma uborkę w tym miesiącu
+      'no_cleaning'  - nie policzone, brak uborki w tym miesiącu
+      'excluded'     - wyłączone (Szemud)
+    """
+    done = chem_done_set(addresses, sheet_done)
+    cl = cleanings_in_month(groups, today)
+    status = {}
+    for a in addresses:
+        b = a.upper()
+        if chem_excluded(a):
+            status[b] = "excluded"
+        elif b in done:
+            status[b] = "sheet"
+        elif cl.get(b):
+            status[b] = "todo"
         else:
-            missed.add(addr)
-
-    done |= {a.upper() for a in addresses if is_done_in_sheet(a, sheet_done)}
-    open_ = {a: e for a, e in open_.items() if a not in done}
-    missed -= done | set(open_)
-    return done, open_, missed
+            status[b] = "no_cleaning"
+    return status
 
 
-def chem_slots(addresses, month_start, month_end):
-    days, d = [], month_start
-    while d <= month_end:
-        if not (CHEM_SKIP_WEEKENDS and d.weekday() >= 5):
-            days.append(d)
-        d += timedelta(days=1)
-
-    slots = {}
-    for i, addr in enumerate(sorted(addresses)):
-        idx = i // CHEM_PER_DAY
-        if idx < len(days):
-            slots[addr.upper()] = days[idx]
-    return slots
-
-
-def plan_chem_attachments(groups, addresses, events, today, sheet_done=()):
-    today_s = str(today)
-    month_start, month_end = month_window()
-    month_end_s = str(month_end)
-    done, open_, missed = chem_plan(events, addresses, today, sheet_done)
-    slots = chem_slots(addresses, month_start, month_end)
-
-    attach, attached_day = set(), {}
-    for addr in sorted(addresses):
-        b = addr.upper()
-        day = slots.get(b)
-        if day is None or b in done or b in open_:
-            continue
-
-        if day >= today:
-            key = f"{day:%Y-%m-%d}_{b}"
-            if key not in groups:
-                continue
-        else:
-            keys = sorted(k for k in groups
-                          if k.split("_", 1)[1] == b and today_s <= k.split("_", 1)[0] <= month_end_s)
-            if not keys:
-                continue
-            key = keys[0]
-
-        day_s = key.split("_", 1)[0]
-        attach.add(key)
-        attached_day[day_s] = attached_day.get(day_s, 0) + 1
-    return attach, done, attached_day
+def print_chem_status(status):
+    titles = {
+        "sheet": "✅ policzone (TRUE w arkuszu)",
+        "todo": "⏳ do zrobienia (jest uborka w tym miesiącu)",
+        "no_cleaning": "⚪ brak uborki w tym miesiącu",
+        "excluded": "🚫 wyłączone z chemii",
+    }
+    for kind in ("sheet", "todo", "no_cleaning", "excluded"):
+        items = sorted(b for b, s in status.items() if s == kind)
+        print(f"🧴 {titles[kind]}: {len(items)}")
+        for b in items:
+            print(f"   - {b}")
 
 
-def create_missing_chemia(service, addresses, chem_texts, events, attach, sheet_done, today):
-    return []
+def check_sheet_matching(sheet_done, addresses):
+    """Wiersze z TRUE w arkuszu, które nie pasują do żadnego adresu z OBAPI (literówki, inne nazwy)."""
+    for s in sheet_done:
+        if not any(addr_match(s, a) for a in addresses):
+            print(f"⚠️ Arkusz: adres „{s}” nie pasuje do żadnego adresu z OBAPI - sprawdź pisownię")
 
 
-def sync_chemistry(service, addresses, chem_texts, sheet_done=()):
-    today = datetime.now(POLAND_TZ).date()
-    m_start, m_end = month_window()
-    t_min = datetime(m_start.year, m_start.month, m_start.day, tzinfo=POLAND_TZ)
-    t_max = datetime(m_end.year, m_end.month, m_end.day, tzinfo=POLAND_TZ) + timedelta(days=1)
+def chem_month_plan(addresses, today, groups, sheet_done=()):
+    """
+    Plan chemii: {ADRES_CHEM_UPPER: data uborki}.
+    - Chemia idzie wyłącznie na istniejącą uborkę danego adresu w tym miesiącu.
+    - Adresy wg kolejności alfabetycznej (stała każdy miesiąc).
+    - Najwcześniejsza uborka z wolnym miejscem (< CHEM_DAY_LIMIT adresów w danym dniu).
+    - Gdy uborka minęła bez odhaczenia, kolejny adres trafia na następną dostępną uborkę.
+    """
+    status = chem_status(addresses, groups, today, sheet_done)
+    cl = cleanings_in_month(groups, today)
+    load = defaultdict(int)
+    plan = {}
 
-    existing, token = {}, None
-    try:
-        while True:
-            r = service.events().list(calendarId=CALENDAR_ID, timeMin=t_min.isoformat(), timeMax=t_max.isoformat(),
-                                      q=CHEM_MARK, singleEvents=True, maxResults=2500, pageToken=token).execute()
-            for e in r.get("items", []):
-                summ = e.get("summary") or ""
-                if not is_chem_event(summ) or chem_is_done(summ):
-                    continue
-                st = e.get("start", {})
-                day = (st.get("dateTime") or st.get("date", "")).split("T")[0]
-                if day < str(today):
-                    continue
-                key = re.sub(r"^✅\s*", "", summ).split("–")[0].strip().upper()
-                existing.setdefault(key, (e["id"], day, e))
-            token = r.get("nextPageToken")
-            if not token:
+    for b in sorted(b for b, s in status.items() if s == "todo"):
+        for d in cl[b]:
+            if load[d] < CHEM_DAY_LIMIT:
+                plan[b] = d
+                load[d] += 1
                 break
-    except Exception as e:
-        print(f"⚠️ Błąd sprawdzania zadań chemii: {e}")
-        return 0, []
 
-    def body_for(addr, day):
-        start = datetime(day.year, day.month, day.day, CHEM_HOURS[0], 0, tzinfo=POLAND_TZ)
-        text = find_in(addr, chem_texts) or DEFAULT_CHEM_TEXT
-        return {
-            "summary": f"{addr} – {CHEM_TITLE}", "description": wrap_auto(text),
-            "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Warsaw"},
-            "end": {"dateTime": start.replace(hour=CHEM_HOURS[1]).isoformat(), "timeZone": "Europe/Warsaw"},
-        }
+    unplanned = [b for b, s in status.items() if s == "todo" and b not in plan]
+    if unplanned:
+        print(f"⚠️ Chemia: brak wolnego miejsca w uborkach tego miesiąca dla {len(unplanned)} adresów")
+    return plan
 
-    updated, report = 0, []
-    label = f"{CHEM_HOURS[0]:02d}:00 - {CHEM_HOURS[1]:02d}:00"
 
-    for addr in addresses:
-        hit = existing.get(addr.upper())
-        if not hit:
-            continue
-        ev_id, ev_day, ev_raw = hit
-
-        if is_done_in_sheet(addr, sheet_done):
-            cur = (ev_raw.get("summary") or "").strip()
-            try:
-                service.events().patch(calendarId=CALENDAR_ID, eventId=ev_id,
-                                       body={"summary": f"{CHEM_DONE} {cur}"}).execute()
-            except Exception as e:
-                print(f"❌ Błąd oznaczania chemii {addr}: {e}")
-            continue
-
-        body = prepare_body(body_for(addr, date.fromisoformat(ev_day)), ev_raw)
-        try:
-            service.events().patch(calendarId=CALENDAR_ID, eventId=ev_id,
-                                   body={"summary": body["summary"], "description": body["description"]}).execute()
-            updated += 1
-        except Exception as e:
-            print(f"❌ Błąd aktualizacji chemii {addr}: {e}")
-        report.append((ev_day, label, body["summary"]))
-
-    return updated, report
+def apply_chem_to_groups(plan, groups):
+    """Dopisuje „+ CHEMIA” tylko do wybranej uborki każdej jednostki sklejonej w adres chemii."""
+    for b, day in plan.items():
+        for key in list(groups):
+            day_s, gb = key.split("_", 1)
+            if day_s == f"{day:%Y-%m-%d}" and chem_addr(gb).upper() == b:
+                groups[key]["chem"] = True
+                break  # jedna uborka na adres = jedna chemia
 
 
 # ==================== EXCEL + EMAIL ====================
@@ -967,13 +1004,15 @@ def generate_excel(report):
     pd.DataFrame(rows).to_excel(EXCEL_FILENAME, index=False, sheet_name="Harmonogram")
     print(f"📊 Wygenerowano plik Excel: {EXCEL_FILENAME}")
 
+
 WEEKDAYS_PL = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
 
 
 def pl_date_label(d):
     """Np. 'Środa, 28.10.2026'."""
     return f"{WEEKDAYS_PL[d.weekday()].capitalize()}, {d:%d.%m.%Y}"
-    
+
+
 def send_email_report(report, manual, mismatches=(), run_date=None):
     now = datetime.now(POLAND_TZ)
     run_date = datetime.now(POLAND_TZ).date()
@@ -992,8 +1031,9 @@ def send_email_report(report, manual, mismatches=(), run_date=None):
         return f"{len(items)} (główny: {main_n}, {label}: {len(items) - main_n})"
 
     body = "Hej,<br><br>"
+    window_end = run_date + timedelta(days=SCAN_DAYS_AHEAD)
     body += (f"<b>Podsumowanie synchronizacji (okno: od {run_date:%d.%m.%Y} "
-             f"do 05.11.2026):</b><br>\n")
+             f"do {window_end:%d.%m.%Y}):</b><br>\n")
     body += f"   • Dodano nowych sprzątań: <b>{by_where(added, 'panie sprzątające')}</b><br>\n"
     body += f"   • Anulowano sprzątań: <b>{by_where(cancelled, 'panie sprzątające')}</b><br><br>\n"
 
@@ -1081,7 +1121,21 @@ def sync_cleanings():
     today, window_end = scan_window()
     print(f"📅 Okno skanowania: od {today:%d.%m.%Y} do {window_end:%d.%m.%Y}")
 
-    m_start, m_end = month_window()
+    # Kalendarze sprzątaczek dla całego okna skanowania
+    employee_cals = load_employee_calendars()
+    employee_assigned_uids = set()
+    employee_events = {}  # emp_name -> lista wydarzeń (tylko gdy pobranie się udało)
+    for emp_name, emp_cal_id in employee_cals.items():
+        emp_events = get_calendar_events(service, emp_cal_id, today, window_end)
+        if emp_events is None:
+            print(f"⚠️ Nie pobrano kalendarza pracownika {emp_name} - anulowania w nim nie będą sprawdzane")
+            continue
+        employee_events[emp_name] = emp_events
+        for ev in emp_events:
+            employee_assigned_uids.update(extract_uids_from_description(ev["description"]))
+    print(f"👤 UID przypisane do sprzątaczek (w całym oknie): {len(employee_assigned_uids)}")
+
+    m_start, m_end = calendar_month_window(today)
     all_events = get_calendar_events(service, CALENDAR_ID, min(today, m_start), max(window_end, m_end))
     if all_events is None:
         return
@@ -1113,31 +1167,22 @@ def sync_cleanings():
     mismatches = list(new_unit_notes) + list(apt_notes) + list(build_notes)
     if old_locks:
         mismatches.append(f"Usunięto {len(old_locks)} starych osobnych wydarzeń blokad - blokady są teraz w uborkach")
-    addresses = sorted({parse_apartment_name(a["name"])[0] for a in apartments})
 
-    employee_cals = load_employee_calendars()
-    employee_assigned_uids = set()
-    for emp_name, emp_cal_id in employee_cals.items():
-        emp_events = get_calendar_events(service, emp_cal_id)
-        if emp_events:
-            for ev in emp_events:
-                employee_assigned_uids.update(extract_uids_from_description(ev["description"]))
-    print(f"👤 UID przypisane do sprzątaczek: {len(employee_assigned_uids)}")
+    # Adresy do chemii: jednostki sklejone (Trakt 99 + K2 + K3) dają jeden wpis
+    addresses = sorted({chem_addr(parse_apartment_name(a["name"])[0]) for a in apartments})
 
-    attach, _, attached_day = plan_chem_attachments(groups, addresses, all_events, today, sheet_done)
-    for key in attach:
-        if key in groups:
-            groups[key]["chem"] = True
+    # 3c. Chemia: sprawdzenie arkusza, status i plan (tylko na istniejące uborki)
+    check_sheet_matching(sheet_done, addresses)
+    print_chem_status(chem_status(addresses, groups, today, sheet_done))
 
-    chem_new = create_missing_chemia(service, addresses, chem_texts, all_events, attach, sheet_done, today)
-    for day, label, title in chem_new:
-        STATS["added"].append({"date": day, "summary": title, "where": "główny"})
+    chem_plan_now = chem_month_plan(addresses, today, groups, sheet_done)
+    apply_chem_to_groups(chem_plan_now, groups)
 
     manual = find_manual_events(events, groups)
     main_by_uid = index_by_uid(events)
     processed_main_ids = set()
 
-    # 4. Dodawanie / aktualizacja (blokady są w opisie)
+    # 4. Dodawanie / aktualizacja w głównym kalendarzu
     for key, g in groups.items():
         if any(u in employee_assigned_uids for u in g["uids"]):
             print(f"  ⏭️ Pominięto w głównym (przypisane do pań sprzątających): [{key.split('_')[0]}] {g['base']}")
@@ -1187,9 +1232,12 @@ def sync_cleanings():
             except Exception as e:
                 print(f"⚠️ Błąd usuwania {ev['id']}: {e}")
 
-    # 6. Chemia i raporty
-    chem_updated, chem_report = sync_chemistry(service, addresses, chem_texts, sheet_done=sheet_done)
-    mismatches += sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals)
+    # 5b. Anulowane sprzątania w kalendarzach sprzątaczek
+    mismatches += remove_cancelled_from_employee_calendars(
+        service, employee_cals, employee_events, groups, data_incomplete)
+
+    # 6. Synchronizacja kalendarzy sprzątaczek
+    mismatches += sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals, today)
 
     report = {}
     for g in groups.values():
@@ -1197,11 +1245,8 @@ def sync_cleanings():
             "time": f"{g['start_dt']:%H:%M} - {g['end_dt']:%H:%M}",
             "summary": build_summary(g),
         })
-    for day_key, time_label, title in chem_report + [(d, t, s) for d, t, s in chem_new]:
-        report.setdefault(day_key, []).append({"time": time_label, "summary": title})
 
-    print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}, "
-          f"chemia zaktualizowana: {chem_updated}")
+    print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}")
     send_email_report(report, manual, mismatches, run_date)
 
 
