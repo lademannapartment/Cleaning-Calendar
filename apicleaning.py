@@ -206,7 +206,7 @@ def auto_rooms(description):
     _, auto, _ = split_description(description or "")
     rooms = set()
     for line in auto:
-        m = re.match(r"^•\s*Pokój\s+(.+?)\s*\|", line)
+        m = re.match(r"^•\s*Pokój\s+(.+?)(?:\s*\||\s*\(|:)", line)
         if m:
             rooms.add(m.group(1).strip())
     return rooms
@@ -569,10 +569,11 @@ def add_stays_to_groups(stays, groups, full_name, base, room, today, window_end)
                 continue
             g["uids"].append(x["uid"])
 
-            if x["blocked"]:
+            if x.get("blocked"):
                 note = x.get("note") or "Brak powódu"
                 room_label = f"Pokój {room}" if room else "Obiekt"
-                detail = f"🔒 Blokada ({room_label}, od {x['start']} do {x['end']}): {note}"
+                detail = f"• {room_label} (od {x['start']} do {x['end']}):"
+                detail += f"\n  📝 Powód blokady:\n     {note}"
             else:
                 notes = [x["name"]] if x["name"] else []
                 detail = f"• {'Pokój ' + room if room else 'Obiekt'} | Rezerwacja: {x['uid_short']}"
