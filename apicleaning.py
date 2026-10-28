@@ -967,9 +967,16 @@ def generate_excel(report):
     pd.DataFrame(rows).to_excel(EXCEL_FILENAME, index=False, sheet_name="Harmonogram")
     print(f"📊 Wygenerowano plik Excel: {EXCEL_FILENAME}")
 
+WEEKDAYS_PL = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
 
-def send_email_report(report, manual, mismatches=()):
+
+def pl_date_label(d):
+    """Np. 'Środa, 28.10.2026'."""
+    return f"{WEEKDAYS_PL[d.weekday()].capitalize()}, {d:%d.%m.%Y}"
+    
+def send_email_report(report, manual, mismatches=(), run_date=None):
     now = datetime.now(POLAND_TZ)
+    run_date = datetime.now(POLAND_TZ).date()
     added, cancelled = STATS["added"], STATS["cancelled"]
     checks = [m[len(CHECK_TAG):].strip() for m in mismatches if m.startswith(CHECK_TAG)]
     notes = [m for m in mismatches if not m.startswith(CHECK_TAG)]
@@ -985,7 +992,8 @@ def send_email_report(report, manual, mismatches=()):
         return f"{len(items)} (główny: {main_n}, {label}: {len(items) - main_n})"
 
     body = "Hej,<br><br>"
-    body += "<b>Podsumowanie synchronizacji (okno: dziś – 05.11.2026):</b><br>\n"
+    body += (f"<b>Podsumowanie synchronizacji (okno: od {run_date:%d.%m.%Y} "
+             f"do 05.11.2026):</b><br>\n")
     body += f"   • Dodano nowych sprzątań: <b>{by_where(added, 'panie sprzątające')}</b><br>\n"
     body += f"   • Anulowano sprzątań: <b>{by_where(cancelled, 'panie sprzątające')}</b><br><br>\n"
 
@@ -1004,16 +1012,16 @@ def send_email_report(report, manual, mismatches=()):
         body += "✏️ <b>Uwagi i rozbieżności:</b><br>\n"
         body += "".join(f"   • {escape(m)}<br>\n" for m in notes) + "<br>\n"
 
-    body += "Raport na dziś i jutro:<br><br>"
-    near = False
-    for offset, label in ((0, "DZISIAJ"), (1, "JUTRO")):
-        key = (now + timedelta(days=offset)).strftime("%Y-%m-%d")
-        if key in report:
-            near = True
-            body += f"📅 <b>{label} ({fmt_date(key)}):</b><br>\n"
-            body += "".join(f"   • {escape(i['summary'])}<br>\n" for i in report[key]) + "<br>\n"
-    if not near:
-        body += "Brak zaplanowanych zadań na dziś oraz jutro.<br><br>"
+    body += "Raport na najbliższe dwa dni:<br><br>"
+    for offset in (0, 1):
+        d = run_date + timedelta(days=offset)
+        items = report.get(d.isoformat(), [])
+        body += f"📅 <b>{pl_date_label(d)}:</b><br>\n"
+        if items:
+            body += "".join(f"   • {escape(i['summary'])}<br>\n" for i in items) + "<br>\n"
+        else:
+            body += "   • brak zadań<br><br>\n"
+
     body += ("Pełny harmonogram znajdziesz w załączonym pliku Excel."
              "<br><br>Pozdrowienia,<br>Twój System Automatyzacji")
     msg.attach(MIMEText(body, "html", "utf-8"))
@@ -1193,7 +1201,7 @@ def sync_cleanings():
 
     print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}, "
           f"chemia zaktualizowana: {chem_updated}")
-    send_email_report(report, manual, mismatches)
+    send_email_report(report, manual, mismatches, run_date)
 
 
 if __name__ == "__main__":
