@@ -619,7 +619,7 @@ def build_groups(apartments):
 
     total_locks = len(locks)
     valid_locks = [lk for lk in locks if is_real_lock(lk)]
-    notes.append(f"🔒 Blokady wpisane do uborek: {len(valid_locks)} z {total_locks} "
+    notes.append(f"🔒 Blokady wpisane: {len(valid_locks)} z {total_locks} "
                  f"(pominięto tarify i zbyt długie okresy)")
     locks_map = locks_by_item(valid_locks)
 
@@ -1128,7 +1128,7 @@ def sync_cleanings():
     main_by_uid = index_by_uid(events)
     processed_main_ids = set()
 
-    # 4. Dodawanie / aktualizacja uborek (blokady są w opisie)
+    # 4. Dodawanie / aktualizacja (blokady są w opisie)
     for key, g in groups.items():
         if any(u in employee_assigned_uids for u in g["uids"]):
             print(f"  ⏭️ Pominięto w głównym (przypisane do pań sprzątających): [{key.split('_')[0]}] {g['base']}")
