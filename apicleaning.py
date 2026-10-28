@@ -1050,12 +1050,13 @@ def send_email_report(report, manual, mismatches=(), run_date=None):
 
 
 # ==================== GŁÓWNA SYNCHRONIZACJA ====================
-import traceback
+
 def sync_cleanings():
     creds = get_credentials()
     service = build("calendar", "v3", credentials=creds)
     STATS["added"].clear()
     STATS["cancelled"].clear()
+    run_date = datetime.now(POLAND_TZ).date()
 
     # 1. Jednostki z IdoBooking -> OBAPI
     new_unit_notes, new_active = [], []
