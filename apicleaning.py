@@ -335,25 +335,33 @@ def get_credentials():
 def load_apartments():
     notes = []
     try:
-        df = read_sheet_by_name(OBJECTS_SHEET, dtype=str).fillna("")
+        creds = get_credentials()
+        values = build("sheets", "v4", credentials=creds).spreadsheets().values().get(
+            spreadsheetId=SHEET_ID, range=f"{OBJECTS_SHEET}!A:G"
+        ).execute().get("values", [])
     except Exception as e:
         return [], True, [f"Błąd odczytu zakładki {OBJECTS_SHEET}: {e}"]
 
+    if not values:
+        return [], True, [f"Zakładka {OBJECTS_SHEET} jest pusta"]
+
+    header = values[0]
+    rows = [dict(zip(header, r + [""] * (len(header) - len(r)))) for r in values[1:]]
+
     apts, inactive, incomplete = [], 0, False
-    for _, row in df.iterrows():
-        status = str(row.get("aktywny", "")).strip().upper()
-        if status != "TAK":
+    for row in rows:
+        if str(row.get("aktywny", "")).strip().upper() != "TAK":
             inactive += 1
             continue
-
         item_id = norm_id(row.get("objectItemId", ""))
         own_name = clean(row.get("Nazwa do kalendarza", ""))
         name = own_name or clean(row.get("Nazwa z IdoBooking", ""))
 
+        if not item_id and not own_name and not clean(row.get("Nazwa z IdoBooking", "")):
+            continue  # całkowicie pusty wiersz z przypadkowym TAK
         if not item_id or not name:
             incomplete = True
-            notes.append(
-                f"Aktywny wiersz OBAPI bez nazwy lub objectItemId (ID: {item_id or '-'}) - usuwanie wstrzymane")
+            notes.append(f"Aktywny wiersz OBAPI bez nazwy lub objectItemId (ID: {item_id or '-'}) - usuwanie wstrzymane")
             continue
         if not own_name:
             notes.append(f"Brak „Nazwa do kalendarza” dla ID {item_id} - użyto nazwy z IdoBooking: {name}")
@@ -361,7 +369,6 @@ def load_apartments():
 
     print(f"🏠 Aktywne jednostki: {len(apts)} (nieaktywne: {inactive})")
     return apts, incomplete, notes
-
 
 def read_objects_rows(creds):
     sheets = build("sheets", "v4", credentials=creds).spreadsheets().values()
