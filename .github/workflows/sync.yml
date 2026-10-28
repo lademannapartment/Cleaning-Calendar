@@ -1,0 +1,49 @@
+name: Synchronizacja sprzątań
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 08:00 w Warszawie (czas letni)
+    - cron: "0 7 * * *"   # 08:00 w Warszawie (czas zimowy)
+  workflow_dispatch:
+
+concurrency:
+  group: sync-cleanings
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Czy to godzina 8 w Warszawie?
+        id: tz
+        run: |
+          H=$(TZ=Europe/Warsaw date +%H)
+          echo "Godzina w Warszawie: $H"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$H" != "08" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.tz.outputs.run == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalacja zależności
+        if: steps.tz.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Synchronizacja
+        if: steps.tz.outputs.run == 'true'
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
+          IDO_DOMAIN: ${{ secrets.IDO_DOMAIN }}
+          IDO_LOGIN: ${{ secrets.IDO_LOGIN }}
+          IDO_KEY: ${{ secrets.IDO_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python apicleaning.py
