@@ -1,0 +1,12 @@
+   .env
+   *.json
+   token.json
+   credentials.json
+   client_names_cache.json
+   *.log
+   *.xlsx
+   *.csv
+   __pycache__/
+   .venv/
+   .idea/
+   .DS_Store
