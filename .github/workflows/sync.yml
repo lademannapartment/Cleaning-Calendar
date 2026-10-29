@@ -2,7 +2,7 @@ name: Synchronizacja sprzątań
 
 on:
   schedule:
-    - cron: "30 * * * *"    # co godzinę o :30 (UTC, pokrywa czas letni i zimowy)
+- cron: "17 * * * *"   # co godzinę o :17 UTC (≈ :17 w Warszawie)
   workflow_dispatch:
 
 concurrency:
