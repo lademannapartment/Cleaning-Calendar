@@ -2,7 +2,7 @@ name: Synchronizacja sprzątań
 
 on:
   schedule:
-    - cron: "17 * * * *"   # co godzinę o :17 UTC (= :17 w Warszawie, bo przesunięcie jest całogodzinne)
+    - cron: "7,37 * * * *"   # dwa sloty na godzinę (:07 i :37 UTC); GitHub może opóźnić start, drugi slot to zapas
   workflow_dispatch:
 
 concurrency:
