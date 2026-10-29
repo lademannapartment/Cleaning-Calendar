@@ -2,7 +2,7 @@ name: Synchronizacja sprzątań
 
 on:
   schedule:
-- cron: "17 * * * *"   # co godzinę o :17 UTC (≈ :17 w Warszawie)
+    - cron: "17 * * * *"   # co godzinę o :17 UTC (= :17 w Warszawie, bo przesunięcie jest całogodzinne)
   workflow_dispatch:
 
 concurrency:
