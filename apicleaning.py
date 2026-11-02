@@ -66,6 +66,12 @@ CHEM_MERGE = {
     "TRAKT 99": "TRAKT ŚW. WOJCIECHA 99/3A",   # pokoje 1-3 oraz studia K2 (Rout) i K3 (Queem)
 }
 
+# Dopisek do opisu chemii dla wybranych adresów (dodawany pod standardowym tekstem)
+CHEM_EXTRA_NOTES = {
+    "POW 3A": "Duży magazyn + 16 i apartament, jeśli jest dostępny.",
+    "POW 3B": "Duży magazyn + 65, 64 i apartamenty, które akurat są dostępne.",
+}
+
 DEFAULT_CHEM_TEXT = """Miejsca trudnodostępne: W pomieszczeniach o niskim standardzie (brak światła, piwnice, obecność insektów/gryzoni) nie ma obowiązku ręcznego liczenia na miejscu. Proszę o wykonanie wyraźnych zdjęć zapasów – stan zostanie zliczony online na ich podstawie.
 
 Priorytet spożywczy: Artykuły takie jak kawa, cukier, herbata, sól i pieprz należy niezwłocznie dostarczyć „do góry” (do części użytkowej), aby były dostępne dla gości/pracowników.
@@ -716,7 +722,11 @@ def build_event_body(g, notes, extras, chem_texts):
     lines = ([f"💡 Uwagi: {note}"] if note else []) + ([f"➕ Dodatkowe zadania: {extra}"] if extra else [])
     lines = (lines + [""] if lines else []) + g["details"]
     if g.get("chem"):
-        lines += ["", CHEM_HEADER, find_in(g["base"], chem_texts) or DEFAULT_CHEM_TEXT]
+        chem_txt = find_in(g["base"], chem_texts) or DEFAULT_CHEM_TEXT
+        extra = next((v for k, v in CHEM_EXTRA_NOTES.items() if addr_match(k, g["base"])), "")
+        if extra:
+            chem_txt = f"{chem_txt}\n\n{extra}"
+        lines += ["", CHEM_HEADER, chem_txt]
 
     lines.append(f"\nUID:{','.join(g['uids'])}")
     summary, description = build_summary(g), wrap_auto("\n".join(lines))
