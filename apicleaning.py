@@ -110,6 +110,9 @@ SCAN_DAYS_AHEAD = 45
 
 STATS = {"added": [], "cancelled": []}
 
+# {ADRES_CHEM_UPPER: {dni, w których obiekt ma blokadę}} - w te dni nie dokładamy chemii
+BLOCKED_DAYS = defaultdict(set)
+
 
 # ==================== OKNO SKANOWANIA ====================
 
@@ -580,6 +583,16 @@ def add_stays_to_groups(stays, groups, full_name, base, room, today, window_end)
 
     for x in stays:
         try:
+            if x["blocked"] and x["start"] and x["end"]:
+                # Dni aktywnej blokady (bez dnia zakończenia, bo wtedy jest sprzątanie)
+                addr_key = chem_addr(base).upper()
+                first = max(x["start"], today)
+                last = min(x["end"] - timedelta(days=1), window_end)
+                d = first
+                while d <= last:
+                    BLOCKED_DAYS[addr_key].add(d)
+                    d += timedelta(days=1)
+
             day = x["end"]
             if not day or not (today <= day <= window_end):
                 continue
@@ -656,6 +669,7 @@ def build_groups(apartments):
 
     by_item = stays_by_item(reservations, client_names)
     groups = {}
+    BLOCKED_DAYS.clear()
     data_incomplete = False
     today, window_end = scan_window()
 
@@ -909,8 +923,9 @@ def cleanings_in_month(groups, today):
     for key in groups:
         day_s, b = key.split("_", 1)
         d = date.fromisoformat(day_s)
-        if today <= d <= month_end:
-            by_addr[chem_addr(b).upper()].add(d)
+        addr = chem_addr(b).upper()
+        if today <= d <= month_end and d not in BLOCKED_DAYS.get(addr, ()):
+            by_addr[addr].add(d)
     return {b: sorted(ds) for b, ds in by_addr.items()}
 
 
