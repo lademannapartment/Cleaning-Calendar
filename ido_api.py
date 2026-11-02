@@ -317,8 +317,8 @@ def fetch_availability_locks():
     today = datetime.now(POLAND_TZ).date()
     end_date = today + timedelta(days=45)
 
-    # Blokady zaczęte od 28.10 (także wcześniejsze, jeśli wciąż trwają)
-    date_from = "2026-10-28 00:00:00"
+    # Blokady zaczęte do 15 dni wstecz (także wcześniejsze, jeśli wciąż trwają)
+    date_from = (today - timedelta(days=15)).strftime("%Y-%m-%d 00:00:00")
     date_to = end_date.strftime("%Y-%m-%d 23:59:59")
 
     # Передаем диапазон дат, чтобы отсечь старые архивные блокировки
