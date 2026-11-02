@@ -106,7 +106,7 @@ MAX_LOCK_DAYS = 120
 LOCK_EXCLUDE_NOTES = ("plan cenow", "cenowy")
 
 # Okno skanowania: od dziś na tyle dni do przodu
-SCAN_DAYS_AHEAD = 14
+SCAN_DAYS_AHEAD = 45
 
 STATS = {"added": [], "cancelled": []}
 
@@ -548,6 +548,10 @@ def cleaning_hours(name):
     u = name.upper()
     if any(a in u for a in ELEKTROZAMEK):
         return 9, 15
+    if "NAWYPASIE" in u and "SZEMUD" in u:
+        return 13, 17
+    if "NAWYPASIE" in u:
+        return 13, 16
     if any(k in u for k in ("APARTMENT", "STUDIO", "ŚWIĘTEGO DUCHA")):
         return 12, 17
     return 10, 15
