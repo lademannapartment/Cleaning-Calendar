@@ -1087,7 +1087,7 @@ def send_email_report(report, manual, mismatches=(), run_date=None):
     body += f"   • Anulowano sprzątań: <b>{by_where(cancelled, 'panie sprzątające')}</b><br><br>\n"
 
     if added:
-        body += "📋 <b>Obiekty przypisane do pań sprzątających:</b><br>\n"
+        body += "🆕 <b>Nowe:</b><br>\n"
         body += "".join(f"   • <b>{fmt_date(i['date'])}</b> — {escape(i['summary'])} ({escape(i['where'])})<br>\n"
                         for i in sorted(added, key=lambda x: x["date"])) + "<br>\n"
     if cancelled:
