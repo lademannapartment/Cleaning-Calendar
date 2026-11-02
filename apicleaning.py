@@ -115,7 +115,6 @@ LOCK_EXCLUDE_NOTES = ("plan cenow", "cenowy")
 SCAN_DAYS_AHEAD = 45
 
 STATS = {"added": [], "cancelled": []}
-SKIPPED = {"unchanged": 0}  # wydarzenia bez zmian - nie wysyłamy do Google
 
 # {ADRES_CHEM_UPPER: {dni, w których obiekt ma blokadę}} - w te dni nie dokładamy chemii
 BLOCKED_DAYS = defaultdict(set)
@@ -764,9 +763,6 @@ def get_calendar_events(service, target_cal_id, start=None, end=None):
                     "date": (st.get("dateTime") or st.get("date", "")).split("T")[0],
                     "summary": (e.get("summary") or "").strip(),
                     "description": e.get("description") or "",
-                    "start_at": st.get("dateTime"),
-                    "end_at": e.get("end", {}).get("dateTime"),
-                    "color": e.get("colorId"),
                 })
             token = r.get("nextPageToken")
             if not token:
@@ -774,19 +770,6 @@ def get_calendar_events(service, target_cal_id, start=None, end=None):
     except Exception as e:
         print(f"❌ Błąd pobierania wydarzeń z kalendarza {target_cal_id}: {e}")
         return None
-
-
-def same_event(ev, body):
-    """True, gdy wydarzenie w kalendarzu już ma to samo czas, tytuł, opis i kolor - wtedy nie wysyłamy zapytania."""
-    try:
-        same_time = (datetime.fromisoformat(ev["start_at"]) == datetime.fromisoformat(body["start"]["dateTime"])
-                     and datetime.fromisoformat(ev["end_at"]) == datetime.fromisoformat(body["end"]["dateTime"]))
-    except (TypeError, ValueError, KeyError):
-        return False
-    return (same_time
-            and ev["summary"] == body["summary"]
-            and ev["description"] == body["description"]
-            and (ev.get("color") or None) == (body.get("colorId") or None))
 
 
 def extract_uids_from_description(description):
@@ -848,9 +831,6 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
 
             mismatches += review_manual(existing_ev, body["summary"], where)
             mismatches += room_checks(existing_ev, where)
-            if same_event(existing_ev, body):
-                SKIPPED["unchanged"] += 1
-                continue
             try:
                 service.events().patch(calendarId=emp_cal_id, eventId=existing_ev["id"], body=body).execute()
 
@@ -1247,12 +1227,9 @@ def sync_cleanings():
             body = prepare_body(body, existing_ev)
             mismatches += review_manual(existing_ev, body["summary"], "główny")
             mismatches += room_checks(existing_ev, "główny")
-            processed_main_ids.add(existing_ev["id"])
-            if same_event(existing_ev, body):
-                SKIPPED["unchanged"] += 1
-                continue
             try:
                 service.events().patch(calendarId=CALENDAR_ID, eventId=existing_ev["id"], body=body).execute()
+                processed_main_ids.add(existing_ev["id"])
                 print(f"  🔄 ZAKTUALIZOWANO w głównym: [{key.split('_')[0]}] {body['summary']}")
             except Exception as e:
                 print(f"  ❌ Błąd aktualizacji {body['summary']}: {e}")
@@ -1298,8 +1275,7 @@ def sync_cleanings():
             "summary": build_summary(g),
         })
 
-    print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}, "
-          f"bez zmian (pominięto): {SKIPPED['unchanged']}")
+    print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}")
     send_email_report(report, manual, mismatches, run_date)
 
 
