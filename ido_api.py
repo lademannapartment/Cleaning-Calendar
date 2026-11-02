@@ -316,10 +316,8 @@ def fetch_availability_locks():
     """Pobiera wszystkie blokady dostępności z IdoBooking na aktualne okno 45 dni."""
     today = datetime.now(POLAND_TZ).date()
     end_date = today + timedelta(days=45)
-    # Start wstecz o maksymalny czas trwania blokady: blokada zaczęta wcześniej, a wciąż aktywna, musi wrócić
-    start_date = today - timedelta(days=120)
 
-    date_from = start_date.strftime("%Y-%m-%d 00:00:00")
+    date_from = today.strftime("%Y-%m-%d 00:00:00")
     date_to = end_date.strftime("%Y-%m-%d 23:59:59")
 
     # Передаем диапазон дат, чтобы отсечь старые архивные блокировки
