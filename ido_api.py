@@ -313,22 +313,39 @@ def _parse_locks(root):
 
 
 def fetch_availability_locks():
-    """Pobiera wszystkie blokady dostępności z IdoBooking na aktualne okno 45 dni."""
+    """
+    Pobiera blokady dostępności z IdoBooking: od (dziś - 15 dni) do (dziś + 45 dni).
+    Zakres dzielony na kawałki po 14 dni, bo API zwraca najwyżej 100 rekordów na zapytanie.
+    Jeśli któryś kawałek zwróci 100 rekordów, uznajemy dane za niepełne i zwracamy None
+    (kalendarz bez zmian w tym przebiegu).
+    """
     today = datetime.now(POLAND_TZ).date()
-    end_date = today + timedelta(days=45)
+    range_start = today - timedelta(days=15)
+    range_end = today + timedelta(days=45)
 
-    # Blokady zaczęte do 15 dni wstecz (także wcześniejsze, jeśli wciąż trwają)
-    date_from = (today - timedelta(days=15)).strftime("%Y-%m-%d 00:00:00")
-    date_to = end_date.strftime("%Y-%m-%d 23:59:59")
+    all_locks, seen = [], set()
+    chunk_start = range_start
+    while chunk_start <= range_end:
+        chunk_end = min(chunk_start + timedelta(days=13), range_end)
+        date_from = chunk_start.strftime("%Y-%m-%d 00:00:00")
+        date_to = chunk_end.strftime("%Y-%m-%d 23:59:59")
+        params_xml = f"<dateFrom>{date_from}</dateFrom><dateTo>{date_to}</dateTo>"
 
-    # Передаем диапазон дат, чтобы отсечь старые архивные блокировки
-    params_xml = f"<dateFrom>{date_from}</dateFrom><dateTo>{date_to}</dateTo>"
+        part = _paged_get(f"availabilitylocks/get/{API_VERSION}/soap", "get", params_xml,
+                          _parse_locks, build_inner=_locks_inner)
+        if part is None:
+            return None  # None = błąd API. NIE zamieniamy na []
+        if len(part) >= 100:
+            print(f"⚠️ Blokady {date_from[:10]}-{date_to[:10]}: {len(part)} rekordów (limit), dane niepełne")
+            return None
+        for lk in part:
+            if lk["id"] not in seen:
+                seen.add(lk["id"])
+                all_locks.append(lk)
+        chunk_start = chunk_end + timedelta(days=1)
 
-    locks = _paged_get(f"availabilitylocks/get/{API_VERSION}/soap", "get", params_xml, _parse_locks,
-                       build_inner=_locks_inner)
-    if locks is not None:
-        print(f"🔒 IdoBooking: pobrano blokad: {len(locks)}")
-    return locks  # None = błąd API. NIE zamieniamy na []
+    print(f"🔒 IdoBooking: pobrano blokad: {len(all_locks)}")
+    return all_locks
 
 
 def locks_by_item(locks):
