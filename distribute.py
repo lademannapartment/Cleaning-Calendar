@@ -347,7 +347,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
     dd = target.strftime("%d.%m.%Y")
     day_groups = [g for k, g in groups.items() if k.split("_")[0] == target.isoformat()]
     if not day_groups:
-        return f"{head}\n\nBrak sprzątań tego dnia."
+        return "Brak sprzątań tego dnia."
 
     assigned_uid = {}
     for evs in day_events.values():
@@ -369,7 +369,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
         todo.append(g)
 
     if not todo and not extensions:
-        return f"{head}\n\nWszystkie sprzątania są już przypisane."
+        return "Wszystkie sprzątania są już przypisane."
 
     decide, proposals = [], {}
     for g in todo:
@@ -391,7 +391,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
         else:
             decide.append(f"• {g['base']}")
 
-    parts = [head]
+    parts = []
     if decide:
         parts += ["", "⚠️ DO DECYZJI (nikt z listy nie pracuje)"] + decide
     if proposals:
@@ -403,8 +403,8 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
     if status is None and todo:
         parts += ["", "ℹ️ Brak danych o dyspozycyjności w grafiku dla tej daty."]
     if extensions:
-        parts += ["", "Przedłużenia (bez sprzątania): " + ", ".join(extensions)]
-    return "\n".join(parts)
+        parts += ["", "Przedłużenia (bez sprzątania):"] + [f"• {e}" for e in extensions]
+    return "\n".join(parts).strip()
 
 
 def upsert_suggestion(service, target, text):
