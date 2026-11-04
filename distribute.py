@@ -38,6 +38,20 @@ def norm(s):
     return re.sub(r"\s+", " ", (s or "")).strip().lower()
 
 
+NO_CLEAN_WORDS = ("nie sprzątamy", "nie sprzatamy", "nie potrzeba sprzątań", "nie potrzeba sprzatan")
+
+
+def no_clean_note(g, main_events):
+    """Tekst ręcznej uwagi z głównego kalendarza, np. „nie sprzątamy przez remont” – albo None."""
+    for ev in main_events or []:
+        if not any(u in g["uids"] for u in ac.extract_uids_from_description(ev["description"])):
+            continue
+        mt = ac.manual_title(ev["summary"]) or ""
+        if any(w in mt.lower() for w in NO_CLEAN_WORDS):
+            return mt
+    return None
+
+
 def is_extension_only(g):
     """Samo przedłużenie (brak numeru pokoju w nawiasie przy przedłużeniu) – sprzątanie niepotrzebne."""
     ext = g.get("ext_rooms") or set()
@@ -205,6 +219,10 @@ def run(date_s, mode, only_cleaners):
         if is_extension_only(g):
             skipped.append(f"➖ {label} – przedłużenie, sprzątanie niepotrzebne")
             continue
+        nc = no_clean_note(g, main_events)
+        if nc:
+            skipped.append(f"🚫 {label} – sprzątanie niepotrzebne: „{nc}”")
+            continue
         manual = None
         for evs in employee_events.values():
             manual = manual_entry_for(g["base"], evs)
@@ -340,7 +358,7 @@ PL_MONTHS = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipc
              "września", "października", "listopada", "grudnia"]
 
 
-def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
+def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, main_events):
     """Opis wydarzenia po polsku: osobno „do decyzji” i „proponowany przydział” (pogrupowany po osobach)."""
     head = (f"PROPOZYCJA PRZYDZIAŁU PERSONELU SPRZĄTAJĄCEGO\n"
             f"{PL_WEEKDAYS[target.weekday()]}, {target.day} {PL_MONTHS[target.month - 1]}")
@@ -357,7 +375,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
 
     status = day_grid.get(dd)
     weekend = target.weekday() >= 5
-    todo, extensions = [], []
+    todo, extensions, no_clean = [], [], []
     for g in sorted(day_groups, key=lambda x: x["base"]):
         if any(u in assigned_uid for u in g["uids"]):
             continue
@@ -366,9 +384,13 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
         if is_extension_only(g):
             extensions.append(g["base"])
             continue
+        nc = no_clean_note(g, main_events)
+        if nc:
+            no_clean.append(f"• {g['base']} – {nc}")
+            continue
         todo.append(g)
 
-    if not todo and not extensions:
+    if not todo and not extensions and not no_clean:
         return "Wszystkie sprzątania są już przypisane."
 
     decide, proposals = [], {}
@@ -392,6 +414,8 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
             decide.append(f"• {g['base']}")
 
     parts = []
+    if no_clean:
+        parts += ["", "🚫 SPRZĄTANIE NIEPOTRZEBNE"] + no_clean
     if decide:
         parts += ["", "⚠️ DO DECYZJI (nikt z listy nie pracuje)"] + decide
     if proposals:
@@ -450,7 +474,8 @@ def run_suggest():
     for i in range(SUGGEST_DAYS):
         target = today + timedelta(days=i)
         day_events = {n: [e for e in evs if e["date"] == target.isoformat()] for n, evs in employee_events.items()}
-        text = suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars)
+        main_events = ac.get_calendar_events(service, ac.CALENDAR_ID, target, target) or []
+        text = suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, main_events)
         result = upsert_suggestion(service, target, text)
         print(f"{target:%d.%m.%Y}: {result}\n{text}\n")
     print("Gotowe.")
