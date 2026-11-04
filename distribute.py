@@ -171,12 +171,10 @@ def run(date_s, mode, only_cleaners):
     main_events = ac.get_calendar_events(service, ac.CALENDAR_ID, target, target)
     if main_events is None:
         sys.exit("❌ Nie udało się odczytać głównego kalendarza – przerwano.")
-    main_dups, main_manual = [], []
+    main_dups = []
     for ev in main_events:
         if any(u in assigned_uid for u in ac.extract_uids_from_description(ev["description"])):
-            # Ręczne dopiski w głównym kalendarzu (np. „nie sprzątamy”) nie są kopiowane do
-            # kalendarza sprzątaczki, więc takie wydarzenia zostawiamy do decyzji człowieka.
-            (main_manual if ac.manual_title(ev["summary"]) else main_dups).append(ev)
+            main_dups.append(ev)
     print(f"Uborek na {target:%d.%m.%Y} w IdoBooking: {len(day_groups)}")
 
     # 3. Arkusz: adresy i siatka dostępności
@@ -250,8 +248,6 @@ def run(date_s, mode, only_cleaners):
         print(s)
 
     print("\n=== DUPLIKATY W GŁÓWNYM KALENDARZU ===")
-    for ev in main_manual:
-        print(f"⚠️ NIE usunięto (ręczny dopisek w głównym): {ev['date']} {ev['summary']}")
     if not main_dups:
         print("(brak)")
     for ev in main_dups:
@@ -266,6 +262,10 @@ def run(date_s, mode, only_cleaners):
     inserted_uids = set()
     for p in plan:
         body = ac.build_event_body(p["g"], notes, extras, chem_texts)
+        main_ev = next((ev for ev in main_events
+                        if any(u in p["g"]["uids"] for u in ac.extract_uids_from_description(ev["description"]))), None)
+        if main_ev:
+            body = ac.prepare_body(body, main_ev)  # przenosi ręczne dopiski z głównego kalendarza
         try:
             service.events().insert(calendarId=p["cal_id"], body=body).execute()
             ok += 1
@@ -275,12 +275,31 @@ def run(date_s, mode, only_cleaners):
             fail += 1
             print(f"❌ Błąd dodawania → {p['name']}: {body['summary']}: {e}")
 
+    # Ręczne dopiski z głównego kalendarza dopisujemy do wydarzenia sprzątaczki (jeśli jeszcze go tam nie ma)
+    for ev in main_dups:
+        mt = ac.manual_title(ev["summary"])
+        if not mt:
+            continue
+        uid = next((u for u in ac.extract_uids_from_description(ev["description"]) if u in assigned_uid), None)
+        if not uid:
+            continue
+        name = assigned_uid[uid]
+        emp = next((e for e in employee_events[name]
+                    if uid in ac.extract_uids_from_description(e["description"])), None)
+        if emp and mt not in emp["summary"]:
+            try:
+                service.events().patch(calendarId=calendars[name], eventId=emp["id"],
+                                       body={"summary": f"{emp['summary']} {mt}"}).execute()
+                print(f"📝 Dopisano do wydarzenia {name}: „{mt}”")
+            except Exception as e:
+                print(f"❌ Błąd dopisywania notatki do {name}: {e}")
+
     # Usuwamy duplikaty z głównego kalendarza (tylko te, których UID są przypisane do sprzątaczki)
     removed = 0
     # Dodane przed chwilą (ich UID nie były w kalendarzach przy starcie) też trafiają na listę
     dups_now = list(main_dups)
     for ev in main_events:
-        if ev in dups_now or ac.manual_title(ev["summary"]):
+        if ev in dups_now:
             continue
         if any(u in inserted_uids for u in ac.extract_uids_from_description(ev["description"])):
             dups_now.append(ev)
