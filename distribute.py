@@ -171,8 +171,12 @@ def run(date_s, mode, only_cleaners):
     main_events = ac.get_calendar_events(service, ac.CALENDAR_ID, target, target)
     if main_events is None:
         sys.exit("❌ Nie udało się odczytać głównego kalendarza – przerwano.")
-    main_dups = [ev for ev in main_events
-                 if any(u in assigned_uid for u in ac.extract_uids_from_description(ev["description"]))]
+    main_dups, main_manual = [], []
+    for ev in main_events:
+        if any(u in assigned_uid for u in ac.extract_uids_from_description(ev["description"])):
+            # Ręczne dopiski w głównym kalendarzu (np. „nie sprzątamy”) nie są kopiowane do
+            # kalendarza sprzątaczki, więc takie wydarzenia zostawiamy do decyzji człowieka.
+            (main_manual if ac.manual_title(ev["summary"]) else main_dups).append(ev)
     print(f"Uborek na {target:%d.%m.%Y} w IdoBooking: {len(day_groups)}")
 
     # 3. Arkusz: adresy i siatka dostępności
@@ -246,6 +250,8 @@ def run(date_s, mode, only_cleaners):
         print(s)
 
     print("\n=== DUPLIKATY W GŁÓWNYM KALENDARZU ===")
+    for ev in main_manual:
+        print(f"⚠️ NIE usunięto (ręczny dopisek w głównym): {ev['date']} {ev['summary']}")
     if not main_dups:
         print("(brak)")
     for ev in main_dups:
