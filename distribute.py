@@ -263,11 +263,13 @@ def run(date_s, mode, only_cleaners):
 
     # 6. Zapis (tylko insert, w kalendarzach sprzątaczek)
     ok, fail = 0, 0
+    inserted_uids = set()
     for p in plan:
         body = ac.build_event_body(p["g"], notes, extras, chem_texts)
         try:
             service.events().insert(calendarId=p["cal_id"], body=body).execute()
             ok += 1
+            inserted_uids.update(p["g"]["uids"])
             print(f"➕ DODANO → {p['name']}: [{target}] {body['summary']}")
         except Exception as e:
             fail += 1
@@ -275,7 +277,14 @@ def run(date_s, mode, only_cleaners):
 
     # Usuwamy duplikaty z głównego kalendarza (tylko te, których UID są przypisane do sprzątaczki)
     removed = 0
-    for ev in main_dups:
+    # Dodane przed chwilą (ich UID nie były w kalendarzach przy starcie) też trafiają na listę
+    dups_now = list(main_dups)
+    for ev in main_events:
+        if ev in dups_now or ac.manual_title(ev["summary"]):
+            continue
+        if any(u in inserted_uids for u in ac.extract_uids_from_description(ev["description"])):
+            dups_now.append(ev)
+    for ev in dups_now:
         try:
             service.events().delete(calendarId=ac.CALENDAR_ID, eventId=ev["id"]).execute()
             removed += 1
