@@ -351,6 +351,8 @@ SUGGEST_OLD_TITLE = "Propozycja przypisania sprzątaczek"
 SUGGEST_DAYS = 14
 SUGGEST_MARK = "[AUTO: propozycja przypisania – nie edytować]"
 ROLE_PL = {"main": "główna", "sub": "zastępstwo", "wknd": "zastępstwo weekendowe"}
+SUGGEST_COLOR_TODO = "9"   # Blueberry (niebieski) – są sprzątania do decyzji
+SUGGEST_COLOR_DONE = "10"  # Basil (zielony) – wszystko rozpisane
 
 
 PL_WEEKDAYS = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
@@ -359,13 +361,12 @@ PL_MONTHS = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipc
 
 
 def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, main_events):
-    """Opis wydarzenia po polsku: osobno „do decyzji” i „proponowany przydział” (pogrupowany po osobach)."""
-    head = (f"PROPOZYCJA PRZYDZIAŁU PERSONELU SPRZĄTAJĄCEGO\n"
-            f"{PL_WEEKDAYS[target.weekday()]}, {target.day} {PL_MONTHS[target.month - 1]}")
+    """Zwraca (tekst, done). Tekst po polsku: osobno „do decyzji” i „proponowany przydział” (po osobach).
+    done=True, gdy nie ma żadnej uborki czekającej na decyzję."""
     dd = target.strftime("%d.%m.%Y")
     day_groups = [g for k, g in groups.items() if k.split("_")[0] == target.isoformat()]
     if not day_groups:
-        return "Brak sprzątań tego dnia."
+        return "Brak sprzątań tego dnia.", True
 
     assigned_uid = {}
     for evs in day_events.values():
@@ -391,7 +392,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, ma
         todo.append(g)
 
     if not todo and not extensions and not no_clean:
-        return "Wszystkie sprzątania są już przypisane."
+        return "Wszystkie sprzątania są już przypisane.", True
 
     decide, proposals = [], {}
     for g in todo:
@@ -428,12 +429,13 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, ma
         parts += ["", "ℹ️ Brak danych o dyspozycyjności w grafiku dla tej daty."]
     if extensions:
         parts += ["", "Przedłużenia (bez sprzątania):"] + [f"• {e}" for e in extensions]
-    return "\n".join(parts).strip()
+    return "\n".join(parts).strip(), not decide
 
 
-def upsert_suggestion(service, target, text):
+def upsert_suggestion(service, target, text, done):
     body = {
         "summary": SUGGEST_TITLE,
+        "colorId": SUGGEST_COLOR_DONE if done else SUGGEST_COLOR_TODO,
         "description": f"{text}\n\n{SUGGEST_MARK}",
         "start": {"dateTime": datetime(target.year, target.month, target.day, 7, 0, tzinfo=ac.POLAND_TZ).isoformat(),
                   "timeZone": "Europe/Warsaw"},
@@ -475,8 +477,8 @@ def run_suggest():
         target = today + timedelta(days=i)
         day_events = {n: [e for e in evs if e["date"] == target.isoformat()] for n, evs in employee_events.items()}
         main_events = ac.get_calendar_events(service, ac.CALENDAR_ID, target, target) or []
-        text = suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, main_events)
-        result = upsert_suggestion(service, target, text)
+        text, done = suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, main_events)
+        result = upsert_suggestion(service, target, text, done)
         print(f"{target:%d.%m.%Y}: {result}\n{text}\n")
     print("Gotowe.")
 
