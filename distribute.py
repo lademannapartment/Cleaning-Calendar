@@ -20,7 +20,7 @@ import argparse
 import difflib
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from googleapiclient.discovery import build
 
@@ -314,12 +314,124 @@ def run(date_s, mode, only_cleaners):
     print(f"\nGotowe. Dodano: {ok}, błędy: {fail}")
 
 
+# ==================== PROPOZYCJA NA 14 DNI (tylko wydarzenie, bez przypisywania) ====================
+
+SUGGEST_TITLE = "Propozycja przypisania sprzątaczek"
+SUGGEST_DAYS = 14
+SUGGEST_MARK = "[AUTO: propozycja przypisania – nie edytować]"
+ROLE_PL = {"main": "główna", "sub": "zastępstwo", "wknd": "zastępstwo weekendowe"}
+
+
+def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
+    """Tekst po polsku: tylko sprzątania, które jeszcze nie są przypisane."""
+    dd = target.strftime("%d.%m.%Y")
+    day_groups = [g for k, g in groups.items() if k.split("_")[0] == target.isoformat()]
+    if not day_groups:
+        return "Brak sprzątań tego dnia."
+
+    assigned_uid = {}
+    for evs in day_events.values():
+        for ev in evs:
+            for u in ac.extract_uids_from_description(ev["description"]):
+                assigned_uid[u] = True
+
+    status = day_grid.get(dd)
+    weekend = target.weekday() >= 5
+    todo = []
+    for g in sorted(day_groups, key=lambda x: x["base"]):
+        if any(u in assigned_uid for u in g["uids"]):
+            continue
+        if any(manual_entry_for(g["base"], evs) for evs in day_events.values()):
+            continue
+        todo.append(g)
+
+    if not todo:
+        return "Wszystkie sprzątania są już przypisane."
+    if status is None:
+        return "Brak danych o dyspozycyjności w grafiku dla tej daty."
+
+    lines = []
+    for g in todo:
+        sheet_addr, _ = find_sheet_addr(g["base"], addr_rows)
+        if not sheet_addr:
+            lines.append(f"• {g['base']} – adres nie znaleziony w arkuszu, do przypisania ręcznie")
+            continue
+        main, sub, wknd = addr_rows[sheet_addr]
+        cands = [("main", main), ("sub", sub)] + ([("wknd", wknd)] if weekend and wknd else [])
+        chosen = None
+        for role, name in cands:
+            st = status.get(name)
+            if st and is_working(st) and calendar_for(name, calendars)[1]:
+                chosen = (role, name)
+                break
+        if chosen:
+            lines.append(f"• {g['base']} – proponowana: {chosen[1]} ({ROLE_PL[chosen[0]]})")
+        else:
+            who = ", ".join(n for _, n in cands)
+            lines.append(f"• {g['base']} – nikt z listy nie pracuje ({who}), do decyzji")
+    return "Do przypisania:\n" + "\n".join(lines)
+
+
+def upsert_suggestion(service, target, text):
+    body = {
+        "summary": SUGGEST_TITLE,
+        "description": f"{text}\n\n{SUGGEST_MARK}",
+        "start": {"dateTime": datetime(target.year, target.month, target.day, 7, 0, tzinfo=ac.POLAND_TZ).isoformat(),
+                  "timeZone": "Europe/Warsaw"},
+        "end": {"dateTime": datetime(target.year, target.month, target.day, 8, 0, tzinfo=ac.POLAND_TZ).isoformat(),
+                "timeZone": "Europe/Warsaw"},
+    }
+    existing = [e for e in ac.get_calendar_events(service, ac.CALENDAR_ID, target, target) or []
+                if e["summary"] == SUGGEST_TITLE]
+    if existing:
+        service.events().patch(calendarId=ac.CALENDAR_ID, eventId=existing[0]["id"], body=body).execute()
+        for extra in existing[1:]:
+            service.events().delete(calendarId=ac.CALENDAR_ID, eventId=extra["id"]).execute()
+        return "zaktualizowano"
+    service.events().insert(calendarId=ac.CALENDAR_ID, body=body).execute()
+    return "dodano"
+
+
+def run_suggest():
+    creds = ac.get_credentials()
+    service = build("calendar", "v3", credentials=creds)
+    today, _ = ac.scan_window()
+    end = today + timedelta(days=SUGGEST_DAYS - 1)
+
+    calendars = ac.load_employee_calendars()
+    employee_events = {}
+    for name, cid in calendars.items():
+        evs = ac.get_calendar_events(service, cid, today, end)
+        if evs is None:
+            sys.exit(f"❌ Nie udało się odczytać kalendarza „{name}” – propozycji nie aktualizuję.")
+        employee_events[name] = evs
+
+    apartments, apt_incomplete, _ = ac.load_apartments()
+    groups, data_incomplete, _ = ac.build_groups(apartments) if apartments else (None, True, [])
+    if groups is None or data_incomplete or apt_incomplete:
+        sys.exit("❌ Niepełne dane z API/OBAPI – propozycji nie aktualizuję.")
+
+    addr_rows, day_grid = read_grafik()
+    for i in range(SUGGEST_DAYS):
+        target = today + timedelta(days=i)
+        day_events = {n: [e for e in evs if e["date"] == target.isoformat()] for n, evs in employee_events.items()}
+        text = suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars)
+        result = upsert_suggestion(service, target, text)
+        print(f"{target:%d.%m.%Y}: {result}\n{text}\n")
+    print("Gotowe.")
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--date", required=True, help="YYYY-MM-DD")
-    p.add_argument("--mode", choices=["dry-run", "apply"], default="dry-run")
+    p.add_argument("--date", default="", help="YYYY-MM-DD (dla dry-run/apply)")
+    p.add_argument("--mode", choices=["dry-run", "apply", "suggest"], default="dry-run")
     p.add_argument("--cleaners", default="", help="opcjonalnie: tylko te panie, po przecinku")
     a = p.parse_args()
+    if a.mode == "suggest":
+        run_suggest()
+        return
+    if not a.date:
+        sys.exit("❌ Podaj --date dla trybu dry-run/apply.")
     only = [x.strip() for x in a.cleaners.split(",") if x.strip()]
     run(a.date, a.mode, only)
 
