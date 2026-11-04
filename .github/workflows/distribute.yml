@@ -1,0 +1,52 @@
+name: Rozdzielanie sprzątań (ręcznie)
+
+# Uruchamiane tylko ręcznie. Dry-run jest domyślny; zapis do kalendarzy – tylko z trybem apply.
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Dzień do rozdzielenia (YYYY-MM-DD), np. 2026-11-06"
+        required: true
+      mode:
+        description: "dry-run = tylko plan, apply = zapis do kalendarzy sprzątaczek"
+        type: choice
+        options:
+          - dry-run
+          - apply
+        default: dry-run
+      cleaners:
+        description: "Opcjonalnie: tylko te panie, po przecinku (puste = wszystkie)"
+        required: false
+        default: ""
+
+# Ta sama grupa co cykliczna synchronizacja – nie biegają jednocześnie i nie nadpisują się.
+concurrency:
+  group: sync-cleanings
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalacja zależności
+        run: pip install -r requirements.txt
+
+      - name: Rozdzielanie sprzątań
+        env:
+          IN_DATE: ${{ inputs.date }}
+          IN_MODE: ${{ inputs.mode }}
+          IN_CLEANERS: ${{ inputs.cleaners }}
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
+          IDO_DOMAIN: ${{ secrets.IDO_DOMAIN }}
+          IDO_LOGIN: ${{ secrets.IDO_LOGIN }}
+          IDO_KEY: ${{ secrets.IDO_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python distribute.py --date "$IN_DATE" --mode "$IN_MODE" --cleaners "$IN_CLEANERS"
