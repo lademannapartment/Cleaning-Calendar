@@ -166,6 +166,13 @@ def run(date_s, mode, only_cleaners):
     ac.apply_chem_to_groups(ac.chem_month_plan(addresses, today, groups, sheet_done), groups)
 
     day_groups = [g for k, g in groups.items() if k.split("_")[0] == target.isoformat()]
+
+    # Duplikaty: wydarzenia w głównym kalendarzu, których UID są już przypisane do sprzątaczki
+    main_events = ac.get_calendar_events(service, ac.CALENDAR_ID, target, target)
+    if main_events is None:
+        sys.exit("❌ Nie udało się odczytać głównego kalendarza – przerwano.")
+    main_dups = [ev for ev in main_events
+                 if any(u in assigned_uid for u in ac.extract_uids_from_description(ev["description"]))]
     print(f"Uborek na {target:%d.%m.%Y} w IdoBooking: {len(day_groups)}")
 
     # 3. Arkusz: adresy i siatka dostępności
@@ -238,6 +245,12 @@ def run(date_s, mode, only_cleaners):
     for s in skipped:
         print(s)
 
+    print("\n=== DUPLIKATY W GŁÓWNYM KALENDARZU ===")
+    if not main_dups:
+        print("(brak)")
+    for ev in main_dups:
+        print(f"🗑️ {ev['date']} {ev['summary']} (przypisane do: {assigned_uid[next(u for u in ac.extract_uids_from_description(ev['description']) if u in assigned_uid)]})")
+
     if dry:
         print("\nDRY-RUN – nic nie zapisano.")
         return
@@ -253,6 +266,17 @@ def run(date_s, mode, only_cleaners):
         except Exception as e:
             fail += 1
             print(f"❌ Błąd dodawania → {p['name']}: {body['summary']}: {e}")
+
+    # Usuwamy duplikaty z głównego kalendarza (tylko te, których UID są przypisane do sprzątaczki)
+    removed = 0
+    for ev in main_dups:
+        try:
+            service.events().delete(calendarId=ac.CALENDAR_ID, eventId=ev["id"]).execute()
+            removed += 1
+            print(f"🗑️ Usunięto duplikat z głównego: {ev['date']} {ev['summary']}")
+        except Exception as e:
+            print(f"❌ Błąd usuwania duplikatu {ev['summary']}: {e}")
+    print(f"Usunięto duplikatów z głównego: {removed}")
     print(f"\nGotowe. Dodano: {ok}, błędy: {fail}")
 
 
