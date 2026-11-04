@@ -335,12 +335,19 @@ SUGGEST_MARK = "[AUTO: propozycja przypisania – nie edytować]"
 ROLE_PL = {"main": "główna", "sub": "zastępstwo", "wknd": "zastępstwo weekendowe"}
 
 
+PL_WEEKDAYS = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
+PL_MONTHS = ["stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia",
+             "września", "października", "listopada", "grudnia"]
+
+
 def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
-    """Tekst po polsku: tylko sprzątania, które jeszcze nie są przypisane."""
+    """Opis wydarzenia po polsku: osobno „do decyzji” i „proponowany przydział” (pogrupowany po osobach)."""
+    head = (f"PROPOZYCJA PRZYDZIAŁU PERSONELU SPRZĄTAJĄCEGO\n"
+            f"{PL_WEEKDAYS[target.weekday()]}, {target.day} {PL_MONTHS[target.month - 1]}")
     dd = target.strftime("%d.%m.%Y")
     day_groups = [g for k, g in groups.items() if k.split("_")[0] == target.isoformat()]
     if not day_groups:
-        return "Brak sprzątań tego dnia."
+        return f"{head}\n\nBrak sprzątań tego dnia."
 
     assigned_uid = {}
     for evs in day_events.values():
@@ -350,45 +357,56 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
 
     status = day_grid.get(dd)
     weekend = target.weekday() >= 5
-    todo = []
+    todo, extensions = [], []
     for g in sorted(day_groups, key=lambda x: x["base"]):
         if any(u in assigned_uid for u in g["uids"]):
             continue
         if any(manual_entry_for(g["base"], evs) for evs in day_events.values()):
             continue
         if is_extension_only(g):
-            todo.append(g)  # pokażemy z powodem, nie przypisujemy
+            extensions.append(g["base"])
             continue
         todo.append(g)
 
-    if not todo:
-        return "Wszystkie sprzątania są już przypisane."
-    if status is None:
-        return "Brak danych o dyspozycyjności w grafiku dla tej daty."
+    if not todo and not extensions:
+        return f"{head}\n\nWszystkie sprzątania są już przypisane."
 
-    lines = []
+    decide, proposals = [], {}
     for g in todo:
-        if is_extension_only(g):
-            lines.append(f"• {g['base']} – nie przypisano, ponieważ jest to przedłużenie (sprzątanie niepotrzebne)")
-            continue
         sheet_addr, _ = find_sheet_addr(g["base"], addr_rows)
         if not sheet_addr:
-            lines.append(f"• {g['base']} – adres nie znaleziony w arkuszu, do przypisania ręcznie")
+            decide.append(f"• {g['base']} – adres nie znaleziony w arkuszu")
             continue
         main, sub, wknd = addr_rows[sheet_addr]
         cands = [("main", main), ("sub", sub)] + ([("wknd", wknd)] if weekend and wknd else [])
         chosen = None
-        for role, name in cands:
-            st = status.get(name)
-            if st and is_working(st) and calendar_for(name, calendars)[1]:
-                chosen = (role, name)
-                break
+        if status:
+            for role, name in cands:
+                st = status.get(name)
+                if st and is_working(st) and calendar_for(name, calendars)[1]:
+                    chosen = (role, name)
+                    break
         if chosen:
-            lines.append(f"• {g['base']} – proponowana: {chosen[1]} ({ROLE_PL[chosen[0]]})")
+            proposals.setdefault(chosen[1], []).append((g["base"], ROLE_PL[chosen[0]]))
         else:
-            who = ", ".join(n for _, n in cands)
-            lines.append(f"• {g['base']} – nikt z listy nie pracuje ({who}), do decyzji")
-    return "Do przypisania:\n" + "\n".join(lines)
+            decide.append(f"• {g['base']} – {', '.join(n for _, n in cands)}")
+
+    parts = [head, ""]
+    if decide:
+        parts += ["⚠️ DO DECYZJI (nikt z listy nie pracuje)"] + decide + [""]
+    if proposals:
+        parts.append("✅ PROPONOWANY PRZYDZIAŁ")
+        for name in sorted(proposals, key=lambda n: (-len(proposals[n]), n)):
+            items = proposals[name]
+            parts.append(f"👤 {name} ({len(items)})")
+            parts += [f"• {base} – {role}" for base, role in items]
+        parts.append("")
+    if status is None and todo:
+        parts += ["ℹ️ Brak danych o dyspozycyjności w grafiku dla tej daty.", ""]
+    parts.append("ℹ️ Pozostałe sprzątania są już przypisane lub są przedłużeniami.")
+    if extensions:
+        parts.append("Przedłużenia (bez sprzątania): " + ", ".join(extensions))
+    return "\n".join(parts)
 
 
 def upsert_suggestion(service, target, text):
