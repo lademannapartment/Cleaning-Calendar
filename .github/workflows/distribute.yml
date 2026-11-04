@@ -5,14 +5,16 @@ on:
   workflow_dispatch:
     inputs:
       date:
-        description: "Dzień do rozdzielenia (YYYY-MM-DD), np. 2026-11-06"
-        required: true
+        description: "Dzień do rozdzielenia (YYYY-MM-DD); dla suggest bez znaczenia"
+        required: false
+        default: ""
       mode:
-        description: "dry-run = tylko plan, apply = zapis do kalendarzy sprzątaczek"
+        description: "dry-run = plan, apply = zapis do kalendarzy sprzątaczek, suggest = propozycja na 14 dni w głównym kalendarzu"
         type: choice
         options:
           - dry-run
           - apply
+          - suggest
         default: dry-run
       cleaners:
         description: "Opcjonalnie: tylko te panie, po przecinku (puste = wszystkie)"

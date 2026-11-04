@@ -50,3 +50,14 @@ jobs:
           IDO_KEY: ${{ secrets.IDO_KEY }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: python apicleaning.py
+
+      - name: Propozycja przypisania sprzątaczek (14 dni)
+        if: steps.tz.outputs.run == 'true'
+        continue-on-error: true
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
+          IDO_DOMAIN: ${{ secrets.IDO_DOMAIN }}
+          IDO_LOGIN: ${{ secrets.IDO_LOGIN }}
+          IDO_KEY: ${{ secrets.IDO_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python distribute.py --mode suggest
