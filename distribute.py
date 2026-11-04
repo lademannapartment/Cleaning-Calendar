@@ -375,7 +375,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
     for g in todo:
         sheet_addr, _ = find_sheet_addr(g["base"], addr_rows)
         if not sheet_addr:
-            decide.append(f"• {g['base']} – adres nie znaleziony w arkuszu")
+            decide.append(f"• {g['base']}")
             continue
         main, sub, wknd = addr_rows[sheet_addr]
         cands = [("main", main), ("sub", sub)] + ([("wknd", wknd)] if weekend and wknd else [])
@@ -389,23 +389,21 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
         if chosen:
             proposals.setdefault(chosen[1], []).append((g["base"], ROLE_PL[chosen[0]]))
         else:
-            decide.append(f"• {g['base']} – {', '.join(n for _, n in cands)}")
+            decide.append(f"• {g['base']}")
 
-    parts = [head, ""]
+    parts = [head]
     if decide:
-        parts += ["⚠️ DO DECYZJI (nikt z listy nie pracuje)"] + decide + [""]
+        parts += ["", "⚠️ DO DECYZJI (nikt z listy nie pracuje)"] + decide
     if proposals:
-        parts.append("✅ PROPONOWANY PRZYDZIAŁ")
+        parts += ["", "✅ PROPONOWANY PRZYDZIAŁ"]
         for name in sorted(proposals, key=lambda n: (-len(proposals[n]), n)):
             items = proposals[name]
             parts.append(f"👤 {name} ({len(items)})")
             parts += [f"• {base} – {role}" for base, role in items]
-        parts.append("")
     if status is None and todo:
-        parts += ["ℹ️ Brak danych o dyspozycyjności w grafiku dla tej daty.", ""]
-    parts.append("ℹ️ Pozostałe sprzątania są już przypisane lub są przedłużeniami.")
+        parts += ["", "ℹ️ Brak danych o dyspozycyjności w grafiku dla tej daty."]
     if extensions:
-        parts.append("Przedłużenia (bez sprzątania): " + ", ".join(extensions))
+        parts += ["", "Przedłużenia (bez sprzątania): " + ", ".join(extensions)]
     return "\n".join(parts)
 
 
