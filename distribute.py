@@ -53,7 +53,11 @@ def read_grafik():
     df = ac.read_sheet_by_name(GRAFIK_SHEET, header=None, dtype=str, keep_default_na=False)
     rows = df.values.tolist()
 
-    hdr_i = next(i for i, r in enumerate(rows) if cell(r[0]) == "Adres")
+    hdr_i = next((i for i, r in enumerate(rows)
+                  if "Główna Pani" in [cell(c) for c in r]), None)
+    if hdr_i is None:
+        sys.exit("❌ Nie znaleziono wiersza nagłówka (Główna Pani) w „Grafik Cleaning”. "
+                 f"Pierwsze wiersze: {rows[:4]}")
     header = [cell(c) for c in rows[hdr_i]]
 
     def col_exact(name):
