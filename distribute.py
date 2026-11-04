@@ -38,6 +38,15 @@ def norm(s):
     return re.sub(r"\s+", " ", (s or "")).strip().lower()
 
 
+def is_extension_only(g):
+    """Samo przedłużenie (brak numeru pokoju w nawiasie przy przedłużeniu) – sprzątanie niepotrzebne."""
+    ext = g.get("ext_rooms") or set()
+    if not ext:
+        return False
+    plain = [r for r in g.get("rooms", set()) if r and r not in ext]
+    return not plain
+
+
 def is_working(status):
     s = norm(status)
     if not s or s.startswith(UNAVAILABLE_PREFIXES):
@@ -193,6 +202,9 @@ def run(date_s, mode, only_cleaners):
         if any(u in assigned_uid for u in g["uids"]):
             skipped.append(f"⏭️ {label} – już przypisane do: {assigned_uid[next(u for u in g['uids'] if u in assigned_uid)]}")
             continue
+        if is_extension_only(g):
+            skipped.append(f"➖ {label} – przedłużenie, sprzątanie niepotrzebne")
+            continue
         manual = None
         for evs in employee_events.values():
             manual = manual_entry_for(g["base"], evs)
@@ -316,7 +328,8 @@ def run(date_s, mode, only_cleaners):
 
 # ==================== PROPOZYCJA NA 14 DNI (tylko wydarzenie, bez przypisywania) ====================
 
-SUGGEST_TITLE = "Propozycja przypisania sprzątaczek"
+SUGGEST_TITLE = "Propozycja przydziału personelu sprzątającego"
+SUGGEST_OLD_TITLE = "Propozycja przypisania sprzątaczek"
 SUGGEST_DAYS = 14
 SUGGEST_MARK = "[AUTO: propozycja przypisania – nie edytować]"
 ROLE_PL = {"main": "główna", "sub": "zastępstwo", "wknd": "zastępstwo weekendowe"}
@@ -343,6 +356,9 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
             continue
         if any(manual_entry_for(g["base"], evs) for evs in day_events.values()):
             continue
+        if is_extension_only(g):
+            todo.append(g)  # pokażemy z powodem, nie przypisujemy
+            continue
         todo.append(g)
 
     if not todo:
@@ -352,6 +368,9 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars):
 
     lines = []
     for g in todo:
+        if is_extension_only(g):
+            lines.append(f"• {g['base']} – nie przypisano, ponieważ jest to przedłużenie (sprzątanie niepotrzebne)")
+            continue
         sheet_addr, _ = find_sheet_addr(g["base"], addr_rows)
         if not sheet_addr:
             lines.append(f"• {g['base']} – adres nie znaleziony w arkuszu, do przypisania ręcznie")
@@ -382,7 +401,7 @@ def upsert_suggestion(service, target, text):
                 "timeZone": "Europe/Warsaw"},
     }
     existing = [e for e in ac.get_calendar_events(service, ac.CALENDAR_ID, target, target) or []
-                if e["summary"] == SUGGEST_TITLE]
+                if e["summary"] in (SUGGEST_TITLE, SUGGEST_OLD_TITLE)]
     if existing:
         service.events().patch(calendarId=ac.CALENDAR_ID, eventId=existing[0]["id"], body=body).execute()
         for extra in existing[1:]:
