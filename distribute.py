@@ -351,8 +351,7 @@ SUGGEST_OLD_TITLE = "Propozycja przypisania sprzątaczek"
 SUGGEST_DAYS = 14
 SUGGEST_MARK = "[AUTO: propozycja przypisania – nie edytować]"
 ROLE_PL = {"main": "główna", "sub": "zastępstwo", "wknd": "zastępstwo weekendowe"}
-SUGGEST_COLOR_TODO = "9"   # Blueberry (niebieski) – są sprzątania do decyzji
-SUGGEST_COLOR_DONE = "10"  # Basil (zielony) – wszystko rozpisane
+SUGGEST_COLOR = "9"  # Blueberry (niebieski) – zawsze
 
 
 PL_WEEKDAYS = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
@@ -435,7 +434,7 @@ def suggest_lines(target, groups, day_events, addr_rows, day_grid, calendars, ma
 def upsert_suggestion(service, target, text, done):
     body = {
         "summary": SUGGEST_TITLE,
-        "colorId": SUGGEST_COLOR_DONE if done else SUGGEST_COLOR_TODO,
+        "colorId": SUGGEST_COLOR,
         "description": f"{text}\n\n{SUGGEST_MARK}",
         "start": {"dateTime": datetime(target.year, target.month, target.day, 7, 0, tzinfo=ac.POLAND_TZ).isoformat(),
                   "timeZone": "Europe/Warsaw"},
