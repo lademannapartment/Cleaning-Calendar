@@ -65,6 +65,9 @@ CHEM_UNCHECKED = ("FALSE", "NIE", "0", "NO")
 CHEM_MERGE = {
     "TRAKT 99": "TRAKT ŚW. WOJCIECHA 99/3A",   # pokoje 1-3 oraz studia K2 (Rout) i K3 (Queem)
     "SEREDYŃSKIEGO 13/6": "SEREDYŃSKIEGO 13/6",  # K1-K4 to jedno mieszkanie
+    "CHLEBNICKA 37/38 M4": "CHLEBNICKA 37/38 M4",  # (A) i (B) to jedno mieszkanie
+    "PAŃSKA 9/4": "PAŃSKA 9/4",                    # (K1) i (K2) to jedno mieszkanie
+    "WARYŃSKIEGO 30/31": "WARYŃSKIEGO 30/31",      # M1 i M2 to jedno mieszkanie
 }
 
 # Jednorazowe wymuszenie dnia chemii: adres -> data. Działa tylko gdy uborka tego dnia istnieje.
