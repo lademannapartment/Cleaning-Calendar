@@ -598,7 +598,7 @@ def add_stays_to_groups(stays, groups, full_name, base, room, today, window_end)
                 last = min(x["end"] - timedelta(days=1), window_end)
                 d = first
                 while d <= last:
-                    BLOCKED_DAYS[addr_key].add(d)
+                    BLOCKED_DAYS[(addr_key, room or "")].add(d)
                     d += timedelta(days=1)
                 if first <= last:
                     BLOCK_NOTES[addr_key].append(
@@ -930,6 +930,12 @@ def chem_excluded(address):
     return any(x in address.upper() for x in CHEM_EXCLUDE_SUBSTR)
 
 
+def chem_day_blocked(addr, d, rooms):
+    """Dzień uborki wyłączony z chemii tylko wtedy, gdy WSZYSTKIE pokoje uborki mają blokadę tego dnia."""
+    rooms = rooms or [""]
+    return all(d in BLOCKED_DAYS.get((addr, r), ()) for r in rooms)
+
+
 def cleanings_in_month(groups, today):
     """
     {ADRES_CHEM_UPPER: [daty uborek od dziś do końca miesiąca]}.
@@ -941,9 +947,8 @@ def cleanings_in_month(groups, today):
     for key in groups:
         day_s, b = key.split("_", 1)
         d = date.fromisoformat(day_s)
-        addr = chem_addr(b).upper()
-        if today <= d <= month_end and d not in BLOCKED_DAYS.get(addr, ()):
-            by_addr[addr].add(d)
+        if today <= d <= month_end and not chem_day_blocked(chem_addr(b).upper(), d, groups[key]["rooms"]):
+            by_addr[chem_addr(b).upper()].add(d)
     return {b: sorted(ds) for b, ds in by_addr.items()}
 
 
@@ -987,10 +992,10 @@ def chem_debug(addresses, groups, today, sheet_done):
         raw = sorted({key.split("_", 1)[0] for key in groups
                       if chem_addr(key.split("_", 1)[1]).upper() == b
                       and today <= date.fromisoformat(key.split("_", 1)[0]) <= month_end})
-        blocked = sorted(f"{d:%d.%m}" for d in BLOCKED_DAYS.get(b, ())
-                         if today <= d <= month_end)
+        blocked_rooms = sorted(r or "obiekt" for (a, r), ds in BLOCKED_DAYS.items()
+                               if a == b and any(today <= d <= month_end for d in ds))
         print(f"🔎 {b}: uborki w grupach w tym miesiącu: {len(raw)} {raw[:6]}; "
-              f"dni z blokadą: {len(blocked)} {blocked[:6]}; "
+              f"pokoje z blokadą: {blocked_rooms or 'brak'}; "
               f"blokady: {BLOCK_NOTES.get(b) or 'brak'}")
 
 
