@@ -1043,6 +1043,10 @@ def chem_month_plan(addresses, today, groups, sheet_done=()):
     unplanned = [b for b, s in status.items() if s == "todo" and b not in plan]
     if unplanned:
         print(f"⚠️ Chemia: brak wolnego miejsca w uborkach tego miesiąca dla {len(unplanned)} adresów")
+    for b in sorted(plan):
+        print(f"🧴 plan: {b} → {plan[b]:%d.%m.%Y}")
+    for b in sorted(unplanned):
+        print(f"🧴 plan: {b} → nie zaplanowano (brak wolnego dnia)")
     return plan
 
 
