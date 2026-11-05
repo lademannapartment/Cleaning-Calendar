@@ -79,10 +79,22 @@ def _soap(endpoint, method, inner_xml, lang="eng"):
     )
     url = f"https://{IDO_DOMAIN}.idobooking.com/api/{endpoint}"
     headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": '""'}
-    try:
-        r = _session.post(url, data=envelope.encode("utf-8"), headers=headers, timeout=60)
-    except requests.RequestException as e:
-        print(f"❌ IdoBooking: błąd połączenia ({endpoint}): {e}")
+    # Przejściowe błędy SSL/połączenia (np. EOF) - do 3 prób, z nowym połączeniem po błędzie
+    global _session
+    r, last_err = None, None
+    for attempt in range(1, 4):
+        try:
+            r = _session.post(url, data=envelope.encode("utf-8"), headers=headers, timeout=60)
+            break
+        except requests.RequestException as e:
+            last_err = e
+            print(f"⚠️ IdoBooking: błąd połączenia ({endpoint}), próba {attempt}/3: {e}")
+            _session.close()
+            _session = requests.Session()
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    if r is None:
+        print(f"❌ IdoBooking: błąd połączenia ({endpoint}): {last_err}")
         return None
     if r.status_code != 200:
         print(f"❌ IdoBooking: HTTP {r.status_code} ({endpoint})")
