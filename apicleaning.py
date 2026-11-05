@@ -290,13 +290,16 @@ def prepare_body(body, existing):
     return body
 
 
+MANUAL_TITLES = defaultdict(int)  # ręczne dopiski w tytułach (zachowane) - liczone, nie wypisywane każdy osobno
+
+
 def review_manual(ev, body_summary, where):
     issues = []
     if place_key(ev["summary"]) != place_key(body_summary):
         issues.append(f"adres różni się: „{ev['summary']}” → „{body_summary}”")
     mt = manual_title(ev["summary"])
     if mt:
-        issues.append(f"dopisek w tytule (zachowano): „{mt}”")
+        MANUAL_TITLES[mt] += 1
     pre, _, post = split_description(ev.get("description", ""))
     extra = clean_lines(pre) + clean_lines(post)
     if extra:
@@ -1364,6 +1367,9 @@ def sync_cleanings():
         })
 
     print(f"\n✨ Gotowe. Dodano: {len(STATS['added'])}, anulowano: {len(STATS['cancelled'])}")
+    if MANUAL_TITLES:
+        kept = ", ".join(f"„{k}” ×{v}" for k, v in sorted(MANUAL_TITLES.items()))
+        mismatches.append(f"ℹ️ Ręczne dopiski w tytułach (zostawione bez zmian): {kept}")
     send_email_report(report, manual, mismatches, run_date)
 
 
