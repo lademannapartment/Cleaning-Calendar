@@ -855,6 +855,8 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
 
             mismatches += review_manual(existing_ev, body["summary"], where)
             mismatches += room_checks(existing_ev, where)
+            if body["summary"] == existing_ev["summary"] and body["description"] == existing_ev["description"]:
+                continue  # bez zmian - nie wysyłamy i nie zaliczamy do raportu
             try:
                 service.events().patch(calendarId=emp_cal_id, eventId=existing_ev["id"], body=body).execute()
 
