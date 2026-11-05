@@ -64,6 +64,12 @@ CHEM_UNCHECKED = ("FALSE", "NIE", "0", "NO")
 # Klucz: początek nazwy (UPPER), wartość: wspólny adres do chemii.
 CHEM_MERGE = {
     "TRAKT 99": "TRAKT ŚW. WOJCIECHA 99/3A",   # pokoje 1-3 oraz studia K2 (Rout) i K3 (Queem)
+    "SEREDYŃSKIEGO 13/6": "SEREDYŃSKIEGO 13/6",  # K1-K4 to jedno mieszkanie
+}
+
+# Jednorazowe wymuszenie dnia chemii: adres -> data. Działa tylko gdy uborka tego dnia istnieje.
+CHEM_FORCE_DAY = {
+    "ZAKOPIAŃSKA 26A/7": date(2026, 11, 6),
 }
 
 # Dopisek do opisu chemii dla wybranych adresów (dodawany pod standardowym tekstem)
@@ -1034,6 +1040,11 @@ def chem_month_plan(addresses, today, groups, sheet_done=()):
     plan = {}
 
     for b in sorted(b for b, s in status.items() if s == "todo"):
+        forced = CHEM_FORCE_DAY.get(b)
+        if forced and forced in cl[b]:
+            plan[b] = forced
+            load[forced] += 1
+            continue
         for d in cl[b]:
             if load[d] < CHEM_DAY_LIMIT:
                 plan[b] = d
