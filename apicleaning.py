@@ -842,6 +842,10 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
             ]
 
             if not matching_emp_evs:
+                if g_date == str(tomorrow):
+                    day_evs = [e["summary"] for e in emp_active if e["date"] == g_date]
+                    print(f"🔍 {where}: brak wydarzenia na {g_date} dla „{g['base']}” "
+                          f"(wydarzenia tego dnia: {day_evs or 'brak'})")
                 continue
 
             existing_ev = matching_emp_evs[0]
