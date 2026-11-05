@@ -860,6 +860,30 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
     return mismatches
 
 
+def strip_chem_from_done_employee_events(service, employee_cals, employee_events, sheet_done):
+    """
+    Zdejmuje „+ CHEMIA” i blok chemii z wydarzeń sprzątaczek (tylko automatycznych, z nagłówkiem chemii)
+    dla adresów oznaczonych w arkuszu jako policzone (TRUE).
+    """
+    for emp_name, events in employee_events.items():
+        emp_cal_id = employee_cals[emp_name]
+        where = f"pracownik {emp_name}"
+        for ev in events:
+            if CHEM_HEADER not in ev["description"] or " + CHEMIA" not in ev["summary"]:
+                continue
+            addr = chem_addr(place_key(ev["summary"]))
+            if not is_done_in_sheet(addr, sheet_done):
+                continue
+            summary = ev["summary"].replace(" + CHEMIA", "")
+            description = re.sub(re.escape(CHEM_HEADER) + r".*?(?=\nUID:)", "", ev["description"], flags=re.S)
+            try:
+                service.events().patch(calendarId=emp_cal_id, eventId=ev["id"],
+                                       body={"summary": summary, "description": description}).execute()
+                print(f"🧴➖ Zdjęto chemię ({where}): [{ev['date']}] {summary}")
+            except Exception as e:
+                print(f"⚠️ Błąd zdejmowania chemii ({where}) {ev['id']}: {e}")
+
+
 def remove_cancelled_from_employee_calendars(service, employee_cals, employee_events,
                                              groups, data_incomplete):
     """
@@ -1311,6 +1335,9 @@ def sync_cleanings():
     # 5b. Anulowane sprzątania w kalendarzach sprzątaczek
     mismatches += remove_cancelled_from_employee_calendars(
         service, employee_cals, employee_events, groups, data_incomplete)
+
+    # 5c. Chemia już policzona (TRUE w arkuszu) - zdejmij ją z kalendarzy sprzątaczek
+    strip_chem_from_done_employee_events(service, employee_cals, employee_events, sheet_done)
 
     # 6. Synchronizacja kalendarzy sprzątaczek
     mismatches += sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals, today)
