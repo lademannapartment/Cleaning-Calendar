@@ -69,7 +69,7 @@ CHEM_MERGE = {
 
 # Jednorazowe wymuszenie dnia chemii: adres -> data. Działa tylko gdy uborka tego dnia istnieje.
 CHEM_FORCE_DAY = {
-    "ZAKOPIAŃSKA 26A/7": date(2026, 11, 6),
+    "ZAKOPIAŃSKA 26A/7": date(2026, 11, 8),
 }
 
 # Dopisek do opisu chemii dla wybranych adresów (dodawany pod standardowym tekstem)
@@ -812,26 +812,30 @@ def find_manual_events(events, groups, extra_uids=()):
 def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals, today):
     mismatches = []
     today_s = str(today)
+    # Dziś i jutro: zmiany (np. nowy pokój, chemia) muszą dotrzeć do uborki z wyprzedzeniem jednego dnia
+    tomorrow = today + timedelta(days=1)
+    sync_days = {today_s, str(tomorrow)}
 
     for emp_name, emp_cal_id in employee_cals.items():
         where = f"pracownik {emp_name}"
-        emp_events = get_calendar_events(service, emp_cal_id, today, today)
+        emp_events = get_calendar_events(service, emp_cal_id, today, tomorrow)
         if emp_events is None:
             continue
 
-        emp_active = [e for e in emp_events if e["date"] == today_s]
+        emp_active = [e for e in emp_events if e["date"] in sync_days]
         if not emp_active:
             continue
 
         for key, g in groups.items():
             g_date = key.split("_")[0]
-            if g_date != today_s:
+            if g_date not in sync_days:
                 continue
 
             g_base = g["base"].upper()
             matching_emp_evs = [
                 ev for ev in emp_active
-                if g_base in place_key(ev["summary"]) or place_key(ev["summary"]) in g_base
+                if ev["date"] == g_date
+                and (g_base in place_key(ev["summary"]) or place_key(ev["summary"]) in g_base)
             ]
 
             if not matching_emp_evs:
