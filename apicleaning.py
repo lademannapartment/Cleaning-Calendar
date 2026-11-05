@@ -906,7 +906,9 @@ def chem_addr(address):
     for frag, target in CHEM_MERGE.items():
         if u.startswith(frag):
             return target
-    return address
+    # Ujednolicenie zapisu: „ZIMNA 7A/5- SEASHELL” i „ZIMNA 7A/5 - SEASHELL”, końcowe „ -” itd.
+    norm = re.sub(r"\s*-\s*", " - ", address)
+    return re.sub(r"\s+", " ", norm).strip(" -")
 
 
 def is_chem_event(summary):
