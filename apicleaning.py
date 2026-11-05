@@ -118,6 +118,8 @@ STATS = {"added": [], "cancelled": []}
 
 # {ADRES_CHEM_UPPER: {dni, w których obiekt ma blokadę}} - w te dni nie dokładamy chemii
 BLOCKED_DAYS = defaultdict(set)
+# {ADRES_CHEM_UPPER: [opisy blokad] } - tylko do diagnostyki w logu
+BLOCK_NOTES = defaultdict(list)
 
 
 # ==================== OKNO SKANOWANIA ====================
@@ -598,6 +600,9 @@ def add_stays_to_groups(stays, groups, full_name, base, room, today, window_end)
                 while d <= last:
                     BLOCKED_DAYS[addr_key].add(d)
                     d += timedelta(days=1)
+                if first <= last:
+                    BLOCK_NOTES[addr_key].append(
+                        f"{first:%d.%m}-{last:%d.%m} ({x.get('note') or 'brak powodu'})")
 
             day = x["end"]
             if not day or not (today <= day <= window_end):
@@ -676,6 +681,7 @@ def build_groups(apartments):
     by_item = stays_by_item(reservations, client_names)
     groups = {}
     BLOCKED_DAYS.clear()
+    BLOCK_NOTES.clear()
     data_incomplete = False
     today, window_end = scan_window()
 
@@ -970,6 +976,24 @@ def chem_status(addresses, groups, today, sheet_done):
     return status
 
 
+def chem_debug(addresses, groups, today, sheet_done):
+    """Diagnostyka: dla adresów bez uborki w miesiącu pokazuje, skąd to się bierze."""
+    _, month_end = calendar_month_window(today)
+    status = chem_status(addresses, groups, today, sheet_done)
+    for a in addresses:
+        b = a.upper()
+        if status.get(b) != "no_cleaning":
+            continue
+        raw = sorted({key.split("_", 1)[0] for key in groups
+                      if chem_addr(key.split("_", 1)[1]).upper() == b
+                      and today <= date.fromisoformat(key.split("_", 1)[0]) <= month_end})
+        blocked = sorted(f"{d:%d.%m}" for d in BLOCKED_DAYS.get(b, ())
+                         if today <= d <= month_end)
+        print(f"🔎 {b}: uborki w grupach w tym miesiącu: {len(raw)} {raw[:6]}; "
+              f"dni z blokadą: {len(blocked)} {blocked[:6]}; "
+              f"blokady: {BLOCK_NOTES.get(b) or 'brak'}")
+
+
 def print_chem_status(status):
     titles = {
         "sheet": "✅ policzone (TRUE w arkuszu)",
@@ -1205,6 +1229,7 @@ def sync_cleanings():
     # 3c. Chemia: sprawdzenie arkusza, status i plan (tylko na istniejące uborki)
     check_sheet_matching(sheet_done, addresses)
     print_chem_status(chem_status(addresses, groups, today, sheet_done))
+    chem_debug(addresses, groups, today, sheet_done)
 
     chem_plan_now = chem_month_plan(addresses, today, groups, sheet_done)
     apply_chem_to_groups(chem_plan_now, groups)
