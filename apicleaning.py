@@ -815,13 +815,14 @@ def find_manual_events(events, groups, extra_uids=()):
 def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee_cals, today):
     mismatches = []
     today_s = str(today)
-    # Dziś i jutro: zmiany (np. nowy pokój, chemia) muszą dotrzeć do uborki z wyprzedzeniem jednego dnia
+    # Całe okno: zmiany (nowe pokoje, chemia, blokady) muszą trafić do kalendarzy sprzątaczek zawsze
+    _, window_end = scan_window()
     tomorrow = today + timedelta(days=1)
-    sync_days = {today_s, str(tomorrow)}
+    sync_days = {str(today + timedelta(days=i)) for i in range((window_end - today).days + 1)}
 
     for emp_name, emp_cal_id in employee_cals.items():
         where = f"pracownik {emp_name}"
-        emp_events = get_calendar_events(service, emp_cal_id, today, tomorrow)
+        emp_events = get_calendar_events(service, emp_cal_id, today, window_end)
         if emp_events is None:
             continue
 
