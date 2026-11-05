@@ -860,12 +860,12 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
 
                 # Фиксируем обновление в статистике для отчета
                 STATS["added"].append({
-                    "date": today_s,
+                    "date": g_date,
                     "summary": body["summary"],
                     "where": where
                 })
 
-                print(f"  🔄 Zaktualizowano w kalendarzu ({where}): [{today_s}] {body['summary']}")
+                print(f"  🔄 Zaktualizowano w kalendarzu ({where}): [{g_date}] {body['summary']}")
             except Exception as e:
                 print(f"  ❌ Błąd aktualizacji ({where}): {e}")
 
