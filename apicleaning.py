@@ -781,6 +781,7 @@ def get_calendar_events(service, target_cal_id, start=None, end=None):
                     "date": (st.get("dateTime") or st.get("date", "")).split("T")[0],
                     "summary": (e.get("summary") or "").strip(),
                     "description": e.get("description") or "",
+                    "color": e.get("colorId"),
                 })
             token = r.get("nextPageToken")
             if not token:
@@ -858,21 +859,26 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
 
             mismatches += review_manual(existing_ev, body["summary"], where)
             mismatches += room_checks(existing_ev, where)
-            if body["summary"] == existing_ev["summary"] and body["description"] == existing_ev["description"]:
-                continue  # bez zmian - nie wysyłamy i nie zaliczamy do raportu
+            # Kolor flamingo jest tylko w głównym kalendarzu. U sprzątaczek zawsze zerujemy kolor
+            # (colorId=None), nawet jeśli wydarzenie było wcześniej oznaczone.
+            body["colorId"] = None
+            changed = (existing_ev.get("color") is not None
+                       or body["summary"] != existing_ev["summary"]
+                       or body["description"] != existing_ev["description"])
+            # Wydarzenia aktualizujemy zawsze; w raporcie liczymy tylko te, które się zmieniły.
             try:
                 service.events().patch(calendarId=emp_cal_id, eventId=existing_ev["id"], body=body).execute()
+            except Exception as e:
+                print(f"  ❌ Błąd aktualizacji ({where}): {e}")
+                continue
 
-                # Фиксируем обновление в статистике для отчета
+            if changed:
                 STATS["added"].append({
                     "date": g_date,
                     "summary": body["summary"],
                     "where": where
                 })
-
                 print(f"  🔄 Zaktualizowano w kalendarzu ({where}): [{g_date}] {body['summary']}")
-            except Exception as e:
-                print(f"  ❌ Błąd aktualizacji ({where}): {e}")
 
     return mismatches
 

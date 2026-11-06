@@ -292,6 +292,7 @@ def run(date_s, mode, only_cleaners):
     inserted_uids = set()
     for p in plan:
         body = ac.build_event_body(p["g"], notes, extras, chem_texts)
+        body.pop("colorId", None)  # flamingo tylko w głównym kalendarzu, nie u sprzątaczek
         main_ev = next((ev for ev in main_events
                         if any(u in p["g"]["uids"] for u in ac.extract_uids_from_description(ev["description"]))), None)
         if main_ev:
