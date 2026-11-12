@@ -569,6 +569,8 @@ def parse_apartment_name(name):
 
 def cleaning_hours(name):
     u = name.upper()
+    if "TRAKT 99" in u and "STUDIO" in u:  # studia K2 (Rout) i K3 (Queem) przy Trakt 99: 12-17
+        return 12, 17
     if any(a in u for a in ELEKTROZAMEK):
         return 9, 15
     if "NAWYPASIE" in u and "SZEMUD" in u:
