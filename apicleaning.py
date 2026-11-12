@@ -842,10 +842,12 @@ def sync_employee_calendars(service, groups, notes, extras, chem_texts, employee
                 continue
 
             g_base = g["base"].upper()
+            # Dokładne dopasowanie adresu (bez numeru pokoju), nie po podciągu:
+            # „TRAKT 99” nie może przejmować wydarzenia „TRAKT 99/3A K3 QUEEM STUDIO”.
             matching_emp_evs = [
                 ev for ev in emp_active
                 if ev["date"] == g_date
-                and (g_base in place_key(ev["summary"]) or place_key(ev["summary"]) in g_base)
+                and same_place(ev["summary"], g["base"])
             ]
 
             if not matching_emp_evs:
