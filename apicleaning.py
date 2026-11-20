@@ -1010,7 +1010,9 @@ def cleanings_in_month(groups, today):
 
 
 def chem_done_set(addresses, sheet_done):
-    """Adresy z TRUE w arkuszu „Cleaning Uwagi” - chemia policzona."""
+    """Adresy z TRUE w arkuszu „Cleaning Uwagi” - chemia policzona.
+    Wpisy arkusza też przechodzą przez chem_addr, żeby jednostki sklejone (np. Trakt 99) pasowały."""
+    sheet_done = [chem_addr(s) for s in sheet_done]
     return {a.upper() for a in addresses if is_done_in_sheet(a, sheet_done)}
 
 
@@ -1073,7 +1075,7 @@ def print_chem_status(status):
 def check_sheet_matching(sheet_done, addresses):
     """Wiersze z TRUE w arkuszu, które nie pasują do żadnego adresu z OBAPI (literówki, inne nazwy)."""
     for s in sheet_done:
-        if not any(addr_match(s, a) for a in addresses):
+        if not any(addr_match(chem_addr(s), a) for a in addresses):
             print(f"⚠️ Arkusz: adres „{s}” nie pasuje do żadnego adresu z OBAPI - sprawdź pisownię")
 
 
